@@ -1,0 +1,829 @@
+import { useState, useRef, useEffect } from "react";
+
+const font = document.createElement('link');
+font.rel = 'stylesheet';
+font.href = 'https://unpkg.com/@fontsource/urbanist/index.css';
+document.head.appendChild(font);
+
+const iconsLink = document.createElement('link');
+iconsLink.rel = 'stylesheet';
+iconsLink.href = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css';
+document.head.appendChild(iconsLink);
+
+const styleEl = document.createElement('style');
+document.head.appendChild(styleEl);
+
+const THEMES = {
+  dark: {
+    bg:'#0a0a0a', surface:'#111', surface2:'#161616',
+    border:'#1e1e1e', border2:'#141414',
+    text:'#f0f0f0', muted:'#444', muted2:'#222', sub:'#333',
+    inputBg:'#111', accent:'#2563eb', accentText:'#fff',
+    btnBg:'#f0f0f0', btnText:'#0a0a0a',
+    ghostBorder:'#1e1e1e', ghostText:'#555',
+    warnBg:'#1a1000', warnBorder:'#332200', warnText:'#f1a035',
+    discountC:'#2563eb', removeBorder:'#2a0000', removeText:'#f13535',
+    savedBg:'#0d1a33', savedBorder:'#1a3a6e',
+    groupBg:'#0d1a0d', groupBorder:'#1a3a1a',
+    ph:'input::placeholder{color:#2a2a2a}',
+    COLORS:['#c8f135','#35c8f1','#f1a035','#f135c8','#35f1a0','#f13535','#a035f1'],
+  },
+  light: {
+    bg:'#fafaf8', surface:'#fff', surface2:'#f5f5f0',
+    border:'#e8e8e4', border2:'#efefeb',
+    text:'#111', muted:'#aaa', muted2:'#e0e0dc', sub:'#bbb',
+    inputBg:'#fff', accent:'#6366f1', accentText:'#fff',
+    btnBg:'#111', btnText:'#fff',
+    ghostBorder:'#ddd', ghostText:'#888',
+    warnBg:'#fff8ed', warnBorder:'#ffe4b5', warnText:'#b45309',
+    discountC:'#6366f1', removeBorder:'#fee2e2', removeText:'#dc2626',
+    savedBg:'#eef2ff', savedBorder:'#c7d2fe',
+    groupBg:'#f0fdf4', groupBorder:'#bbf7d0',
+    ph:'input::placeholder{color:#bbb}',
+    COLORS:['#6366f1','#f59e0b','#10b981','#ef4444','#0ea5e9','#f97316','#8b5cf6'],
+  },
+};
+
+export default function App() {
+  const [dark, setDark] = useState(true);
+  const T = THEMES[dark ? 'dark' : 'light'];
+
+  styleEl.textContent = `
+    *{box-sizing:border-box;margin:0;padding:0}
+    input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none}
+    .chip:hover{opacity:1!important}
+    .item-row:hover{background:${T.surface2}!important}
+    .saved-row:hover{background:${T.surface2}!important}
+    .group-chip:hover{border-color:currentColor!important;opacity:0.9}
+    ${T.ph}
+  `;
+
+  // Split state
+  const [people, setPeople]       = useState([]);
+  const [items, setItems]         = useState([]);
+  const [discount, setDiscount]   = useState({ amount:'', method:'equal' });
+  const [orderDate, setOrderDate] = useState('');
+  const [newName, setNewName]     = useState('');
+  const [scanning, setScanning]   = useState(false);
+  const [copied, setCopied]       = useState(false);
+  const [addingItem, setAddingItem] = useState(false);
+  const [newItem, setNewItem]     = useState({ name:'', qty:'1', price:'' });
+  const fileRef = useRef();
+
+  // Saved splits state
+  const [savedSplits, setSavedSplits]       = useState([]);
+  const [showSaved, setShowSaved]           = useState(false);
+  const [savingName, setSavingName]         = useState('');
+  const [showSaveInput, setShowSaveInput]   = useState(false);
+  const [saveStatus, setSaveStatus]         = useState('');
+  const [expandedSplit, setExpandedSplit]   = useState(null);
+  const [renamingSplit, setRenamingSplit]   = useState(null);
+  const [renameVal, setRenameVal]           = useState('');
+
+  // Groups state
+  const [savedGroups, setSavedGroups]       = useState([]);
+  const [showGroups, setShowGroups]         = useState(false);
+  const [showGroupInput, setShowGroupInput] = useState(false);
+  const [groupName, setGroupName]           = useState('');
+  const [groupSaveStatus, setGroupSaveStatus] = useState('');
+
+  const storage = {
+    set: async (key, value) => { try { localStorage.setItem(key, value); } catch(e) {} },
+    get: async (key) => { try { const v = localStorage.getItem(key); return v ? { value: v } : null; } catch(e) { return null; } },
+    delete: async (key) => { try { localStorage.removeItem(key); } catch(e) {} },
+    list: async (prefix) => { try { return { keys: Object.keys(localStorage).filter(k => k.startsWith(prefix)) }; } catch(e) { return { keys: [] }; } },
+  };
+
+  // Load from storage on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        // Load splits
+        const splitRes = await storage.list('split:');
+        if (splitRes?.keys?.length > 0) {
+          const splits = (await Promise.all(
+            splitRes.keys.map(async k => {
+              try { const r = await storage.get(k); return r ? JSON.parse(r.value) : null; }
+              catch { return null; }
+            })
+          )).filter(Boolean).sort((a,b) => b.savedAt - a.savedAt);
+          setSavedSplits(splits);
+        }
+        // Load groups
+        const groupRes = await storage.list('group:');
+        if (groupRes?.keys?.length > 0) {
+          const groups = (await Promise.all(
+            groupRes.keys.map(async k => {
+              try { const r = await storage.get(k); return r ? JSON.parse(r.value) : null; }
+              catch { return null; }
+            })
+          )).filter(Boolean).sort((a,b) => b.savedAt - a.savedAt);
+          setSavedGroups(groups);
+        }
+      } catch(e) { console.error(e); }
+    })();
+  }, []);
+
+  // ── Helpers ──
+  const inp = (extra={}) => ({
+    background:'transparent', border:'1px solid transparent', color:T.text,
+    fontFamily:'"Urbanist",sans-serif', fontSize:12, padding:'4px 6px',
+    borderRadius:2, outline:'none', width:'100%', ...extra,
+  });
+  const ghBtn = (extra={}) => ({
+    background:'none', border:`1px solid ${T.ghostBorder}`, borderRadius:2,
+    padding:'7px 14px', color:T.ghostText, fontFamily:'"Urbanist",sans-serif',
+    fontSize:11, fontWeight:600, cursor:'pointer', letterSpacing:'0.06em', ...extra,
+  });
+  const solidInput = (extra={}) => ({
+    background:T.inputBg, border:`1px solid ${T.border}`, color:T.text,
+    fontFamily:'"Urbanist",sans-serif', fontSize:12, padding:'8px 10px',
+    borderRadius:2, outline:'none', ...extra,
+  });
+  const focusBorder = e => e.target.style.borderColor = T.border;
+  const blurBorder  = e => e.target.style.borderColor = 'transparent';
+
+  // ── People ──
+  const addPerson = () => {
+    const name = newName.trim();
+    if (!name) return;
+    setPeople(p => [...p, { id:Date.now(), name, color:T.COLORS[p.length % T.COLORS.length] }]);
+    setNewName('');
+  };
+  const removePerson = id => {
+    setPeople(p => p.filter(x => x.id !== id));
+    setItems(p => p.map(i => { const next = {...i.assignedTo}; delete next[id]; return {...i, assignedTo:next}; }));
+  };
+
+  // ── Groups ──
+  const saveGroup = async () => {
+    if (!people.length) return;
+    const name = groupName.trim() || `Group ${savedGroups.length + 1}`;
+    const id = Date.now();
+    const group = { id, name, savedAt:id, members: people };
+    try {
+      await storage.set(`group:${id}`, JSON.stringify(group));
+      setSavedGroups(prev => [group, ...prev]);
+      setGroupSaveStatus('saved');
+      setShowGroupInput(false);
+      setGroupName('');
+      setTimeout(() => setGroupSaveStatus(''), 2000);
+    } catch(e) { console.error(e); }
+  };
+
+  const loadGroup = (group) => {
+    // Reassign fresh IDs so colors work correctly with current theme
+    const fresh = group.members.map((m, i) => ({
+      ...m,
+      id: Date.now() + i,
+      color: T.COLORS[i % T.COLORS.length],
+    }));
+    setPeople(fresh);
+    setItems(prev => prev.map(i => ({ ...i, assignedTo:{} })));
+    setShowGroups(false);
+  };
+
+  const deleteGroup = async (groupId) => {
+    try {
+      await storage.delete(`group:${groupId}`);
+      setSavedGroups(prev => prev.filter(g => g.id !== groupId));
+    } catch(e) { console.error(e); }
+  };
+
+  // ── Items ──
+  const addItemManually = () => {
+    const name = newItem.name.trim();
+    const price = parseFloat(newItem.price);
+    const qty = parseInt(newItem.qty) || 1;
+    if (!name || isNaN(price) || price <= 0) return;
+    setItems(p => [...p, { id:Date.now()+Math.random(), name, price, qty, assignedTo:{} }]);
+    setNewItem({ name:'', qty:'1', price:'' });
+    setAddingItem(false);
+  };
+  const updateItem  = (id, field, value) => setItems(prev => prev.map(i => i.id===id ? {...i,[field]:value} : i));
+  const removeItem  = id => setItems(p => p.filter(i => i.id !== id));
+  const toggleAssign = (itemId, personId) =>
+    setItems(prev => prev.map(item => {
+      if (item.id !== itemId) return item;
+      const cur = item.assignedTo[personId] || 0;
+      const next = { ...item.assignedTo };
+      if (cur > 0) { delete next[personId]; } else { next[personId] = 1; }
+      return { ...item, assignedTo: next };
+    }));
+
+  const setPersonQty = (itemId, personId, qty) =>
+    setItems(prev => prev.map(item => {
+      if (item.id !== itemId) return item;
+      const next = { ...item.assignedTo };
+      if (qty <= 0) { delete next[personId]; } else { next[personId] = qty; }
+      return { ...item, assignedTo: next };
+    }));
+
+  // ── Scan ──
+  const compressImage = (file) => new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const max = 1024;
+      let w = img.width, h = img.height;
+      if (w > max || h > max) {
+        if (w > h) { h = Math.round(h * max / w); w = max; }
+        else { w = Math.round(w * max / h); h = max; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+
+  const scanReceipt = async file => {
+    if (!file) return;
+    setScanning(true);
+    try {
+      const base64 = await compressImage(file);
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64 })
+      });
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (!text) throw new Error('Empty response');
+      const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
+      if (parsed && parsed.date) setOrderDate(parsed.date);
+      const parsedItems = Array.isArray(parsed) ? parsed : (parsed.items || []);
+      setItems(prev => [...prev, ...parsedItems.map(item => ({
+        id:Date.now()+Math.random(), name:item.name||'Item',
+        price:parseFloat(item.price)||0, qty:parseInt(item.qty)||1, assignedTo:{}
+      }))]);
+    } catch(err) {
+      console.error('Scan error:', err);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  // ── Totals ──
+  const computeTotals = () => {
+    const subtotals = {};
+    people.forEach(p => { subtotals[p.id] = 0; });
+    items.forEach(item => {
+      const assignedEntries = Object.entries(item.assignedTo);
+      if (!assignedEntries.length) return;
+      const totalAssigned = assignedEntries.reduce((sum, [, q]) => sum + q, 0);
+      const itemQty = parseInt(item.qty) || 1;
+      const scale = totalAssigned > itemQty ? itemQty / totalAssigned : 1;
+      assignedEntries.forEach(([pid, qty]) => {
+        subtotals[pid] = (subtotals[pid]||0) + parseFloat(item.price) * qty * scale;
+      });
+    });
+    const discountAmt = parseFloat(discount.amount) || 0;
+    const active = people.filter(p => (subtotals[p.id]||0) > 0);
+    const discounts = {};
+    people.forEach(p => { discounts[p.id] = 0; });
+    const finals = { ...subtotals };
+    if (discountAmt > 0 && active.length > 0) {
+      if (discount.method === 'equal') {
+        const each = discountAmt / active.length;
+        active.forEach(p => { discounts[p.id] = each; finals[p.id] = Math.max(0, subtotals[p.id] - each); });
+      } else {
+        const grandSub = active.reduce((a,p) => a+(subtotals[p.id]||0), 0);
+        active.forEach(p => {
+          discounts[p.id] = discountAmt*(grandSub>0 ? subtotals[p.id]/grandSub : 0);
+          finals[p.id] = Math.max(0, subtotals[p.id] - discounts[p.id]);
+        });
+      }
+    }
+    return { subtotals, discounts, finals, grandTotal: Object.values(finals).reduce((a,b) => a+b, 0) };
+  };
+
+  // ── Export / Save split ──
+  const exportSplit = () => {
+    const { subtotals, discounts, finals, grandTotal } = computeTotals();
+    const exportDateStr = orderDate ? new Date(orderDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+    let text = 'ORDER SPLIT' + (exportDateStr ? ' — '+exportDateStr : '') + '\n' + '─'.repeat(26) + '\n\n';
+    people.forEach(p => {
+      text += `${p.name.toUpperCase()}\n`;
+      items.filter(i => i.assignedTo[p.id] > 0).forEach(i => {
+        const qty = i.assignedTo[p.id];
+        const lineTotal = parseFloat(i.price) * qty;
+        text += `  ${i.name} ×${qty}: $${lineTotal.toFixed(2)}\n`;
+      });
+      text += `  OWES: $${(finals[p.id]||0).toFixed(2)}\n\n`;
+    });
+    text += `TOTAL: $${grandTotal.toFixed(2)}`;
+    navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(()=>setCopied(false),2200); });
+  };
+
+  const saveSplit = async () => {
+    const name = savingName.trim() || `Split ${new Date().toLocaleDateString()}`;
+    const { subtotals, discounts, finals, grandTotal } = computeTotals();
+    const id = Date.now();
+    const displayDate = orderDate ? new Date(orderDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    const splitData = { id, name, savedAt:id, date:displayDate, orderDate, people, items, discount, finals, grandTotal };
+    try {
+      await storage.set(`split:${id}`, JSON.stringify(splitData));
+      setSavedSplits(prev => [splitData, ...prev]);
+      setSaveStatus('saved'); setShowSaveInput(false); setSavingName('');
+      setTimeout(()=>setSaveStatus(''),2000);
+    } catch(e) { console.error(e); }
+  };
+
+  const deleteSplit = async (splitId) => {
+    try {
+      await storage.delete(`split:${splitId}`);
+      setSavedSplits(prev => prev.filter(s => s.id !== splitId));
+      if (expandedSplit===splitId) setExpandedSplit(null);
+    } catch(e) { console.error(e); }
+  };
+
+  const renameSplit = async (splitId, newName) => {
+    if (!newName.trim()) return;
+    try {
+      const r = await storage.get(`split:${splitId}`);
+      if (!r) return;
+      const data = JSON.parse(r.value);
+      data.name = newName.trim();
+      await storage.set(`split:${splitId}`, JSON.stringify(data));
+      setSavedSplits(prev => prev.map(s => s.id === splitId ? { ...s, name: newName.trim() } : s));
+      setRenamingSplit(null);
+      setRenameVal('');
+    } catch(e) { console.error(e); }
+  };
+
+  const loadSplit = (split) => {
+    setPeople(split.people); setItems(split.items); setDiscount(split.discount);
+    if (split.orderDate) setOrderDate(split.orderDate);
+    setShowSaved(false);
+  };
+
+  const { subtotals, discounts, finals, grandTotal } = computeTotals();
+  const hasItems   = items.length > 0;
+  const hasPeople  = people.length > 0;
+  const unassigned = items.filter(i => Object.keys(i.assignedTo).length === 0).length;
+
+  const SecLabel = ({ children }) => (
+    <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:10 }}>{children}</div>
+  );
+
+  const HeaderBtn = ({ onClick, active, icon, label, count }) => (
+    <button onClick={onClick} style={{
+      ...ghBtn({ display:'flex', alignItems:'center', gap:5, padding:'7px 12px' }),
+      background: active ? T.accent : 'none',
+      color: active ? T.accentText : T.ghostText,
+      border: `1px solid ${active ? T.accent : T.ghostBorder}`,
+    }}>
+      <i className={`ti ti-${icon}`} style={{ fontSize:14 }} aria-hidden="true" />
+      {label}{count > 0 ? ` (${count})` : ''}
+    </button>
+  );
+
+  return (
+    <div style={{ background:T.bg, minHeight:'100vh', color:T.text, fontFamily:'"Urbanist",sans-serif', transition:'background 0.2s', paddingBottom:60 }}>
+
+      <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}}
+        onChange={e => { if(e.target.files[0]){ scanReceipt(e.target.files[0]); e.target.value=''; } }} />
+
+      {/* ── HEADER ── */}
+      <div style={{ padding:'16px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <div>
+          <div style={{ fontSize:20, fontWeight:800, letterSpacing:'0.06em' }}>SPLIT.IT</div>
+          <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
+        </div>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <HeaderBtn onClick={()=>{ setShowGroups(s=>!s); setShowSaved(false); }} active={showGroups} icon="users" label="Groups" count={savedGroups.length} />
+          <HeaderBtn onClick={()=>{ setShowSaved(s=>!s); setShowGroups(false); }} active={showSaved} icon="bookmark" label="Saved" count={savedSplits.length} />
+          <button onClick={()=>setDark(d=>!d)}
+            style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted, display:'flex', alignItems:'center' }}>
+            {dark
+              ? <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <circle cx="7" cy="7" r="2.5"/>
+                  <line x1="7" y1="1" x2="7" y2="2.5"/><line x1="7" y1="11.5" x2="7" y2="13"/>
+                  <line x1="1" y1="7" x2="2.5" y2="7"/><line x1="11.5" y1="7" x2="13" y2="7"/>
+                  <line x1="2.93" y1="2.93" x2="3.99" y2="3.99"/><line x1="10.01" y1="10.01" x2="11.07" y2="11.07"/>
+                  <line x1="11.07" y1="2.93" x2="10.01" y2="3.99"/><line x1="3.99" y1="10.01" x2="2.93" y2="11.07"/>
+                </svg>
+              : <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M11.5 8.5A5 5 0 0 1 5.5 2.5a5 5 0 1 0 6 6z"/>
+                </svg>
+            }
+          </button>
+        </div>
+      </div>
+
+      {/* ── GROUPS PANEL ── */}
+      {showGroups && (
+        <div style={{ borderBottom:`1px solid ${T.border}`, padding:'16px 20px', background:T.surface2 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+            <SecLabel>Saved Groups</SecLabel>
+            {hasPeople && (
+              <button onClick={()=>setShowGroupInput(s=>!s)}
+                style={{ ...ghBtn({ padding:'5px 12px', fontSize:10 }), background:showGroupInput?T.accent:'none', color:showGroupInput?T.accentText:T.ghostText, border:`1px solid ${showGroupInput?T.accent:T.ghostBorder}` }}>
+                + Save current people as group
+              </button>
+            )}
+          </div>
+
+          {/* Save group input */}
+          {showGroupInput && (
+            <div style={{ display:'flex', gap:8, marginBottom:14 }}>
+              <input style={{ ...solidInput({ flex:1 }) }} placeholder="Group name... (e.g. Weee! Crew)"
+                value={groupName} onChange={e=>setGroupName(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&saveGroup()} autoFocus />
+              <button onClick={saveGroup}
+                style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'8px 16px', fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, cursor:'pointer' }}>
+                Save
+              </button>
+              <button onClick={()=>setShowGroupInput(false)} style={ghBtn({ padding:'8px 12px' })}>Cancel</button>
+            </div>
+          )}
+
+          {savedGroups.length === 0 ? (
+            <div style={{ fontSize:12, color:T.muted, padding:'8px 0' }}>
+              No saved groups yet. Add people above and save them as a group.
+            </div>
+          ) : (
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              {savedGroups.map(group => (
+                <div key={group.id} className="saved-row"
+                  style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'12px 14px', display:'flex', justifyContent:'space-between', alignItems:'center', transition:'background 0.15s' }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600, color:T.text, marginBottom:6 }}>{group.name}</div>
+                    <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
+                      {group.members.map((m,i) => (
+                        <span key={m.id} style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'3px 8px', borderRadius:100, border:`1px solid ${T.COLORS[i%T.COLORS.length]}44`, background:`${T.COLORS[i%T.COLORS.length]}11`, color:T.COLORS[i%T.COLORS.length], fontSize:10, fontWeight:500 }}>
+                          <span style={{ width:5, height:5, borderRadius:'50%', background:T.COLORS[i%T.COLORS.length], flexShrink:0 }}/>
+                          {m.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display:'flex', gap:6, alignItems:'center', marginLeft:12, flexShrink:0 }}>
+                    <button onClick={()=>loadGroup(group)}
+                      style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'6px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer', letterSpacing:'0.06em' }}>
+                      Load
+                    </button>
+                    <button onClick={()=>deleteGroup(group.id)}
+                      style={{ background:'none', border:`1px solid ${T.removeBorder}`, color:T.removeText, borderRadius:2, padding:'6px 10px', fontFamily:'"Urbanist",sans-serif', fontSize:10, cursor:'pointer', opacity:0.7 }}>
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SAVED SPLITS PANEL ── */}
+      {showSaved && (
+        <div style={{ borderBottom:`1px solid ${T.border}`, padding:'16px 20px', background:T.surface2 }}>
+          <SecLabel>Saved Splits</SecLabel>
+          {savedSplits.length === 0 ? (
+            <div style={{ fontSize:12, color:T.muted, padding:'8px 0' }}>No saved splits yet.</div>
+          ) : savedSplits.map(split => (
+            <div key={split.id}>
+              {renamingSplit === split.id ? (
+                <div style={{ display:'flex', gap:8, marginBottom:6 }}>
+                  <input autoFocus
+                    style={{ ...solidInput({ flex:1 }) }}
+                    value={renameVal}
+                    onChange={e => setRenameVal(e.target.value)}
+                    onKeyDown={e => { if(e.key==='Enter') renameSplit(split.id, renameVal); if(e.key==='Escape'){ setRenamingSplit(null); setRenameVal(''); } }}
+                  />
+                  <button onClick={() => renameSplit(split.id, renameVal)}
+                    style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'8px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer' }}>
+                    Save
+                  </button>
+                  <button onClick={() => { setRenamingSplit(null); setRenameVal(''); }} style={ghBtn({ padding:'8px 12px', fontSize:10 })}>Cancel</button>
+                </div>
+              ) : (
+                <div className="saved-row"
+                  style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 12px', borderRadius:2, border:`1px solid ${T.border}`, marginBottom:6, background:T.surface, cursor:'pointer', transition:'background 0.15s' }}
+                  onClick={()=>setExpandedSplit(expandedSplit===split.id ? null : split.id)}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{split.name}</div>
+                    <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>
+                      {split.date} · {split.people.map(p=>p.name).join(', ')} · ${split.grandTotal.toFixed(2)}
+                    </div>
+                  </div>
+                  <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                    <button onClick={e=>{ e.stopPropagation(); loadSplit(split); }}
+                      style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'5px 12px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer' }}>
+                      Load
+                    </button>
+                    <button onClick={e=>{ e.stopPropagation(); setRenamingSplit(split.id); setRenameVal(split.name); }}
+                      style={{ background:'none', border:`1px solid ${T.ghostBorder}`, color:T.ghostText, borderRadius:2, padding:'5px 10px', fontSize:10, cursor:'pointer', fontFamily:'"Urbanist",sans-serif' }}
+                      title="Rename">
+                      <i className="ti ti-pencil" style={{ fontSize:12 }} aria-hidden="true"/>
+                    </button>
+                    <button onClick={e=>{ e.stopPropagation(); deleteSplit(split.id); }}
+                      style={{ background:'none', border:`1px solid ${T.removeBorder}`, color:T.removeText, borderRadius:2, padding:'5px 10px', fontSize:10, cursor:'pointer', opacity:0.7 }}>
+                      ×
+                    </button>
+                    <i className={`ti ti-chevron-${expandedSplit===split.id?'up':'down'}`} style={{ fontSize:14, color:T.muted }} aria-hidden="true"/>
+                  </div>
+                </div>
+              )}
+              {expandedSplit === split.id && (
+                <div style={{ background:T.savedBg, border:`1px solid ${T.savedBorder}`, borderRadius:2, padding:'12px 14px', marginBottom:8, marginTop:-2 }}>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+                    {split.people.map((p,i) => (
+                      <div key={p.id} style={{ flex:'1 1 100px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'10px 12px', borderLeft:`3px solid ${T.COLORS[i%T.COLORS.length]}` }}>
+                        <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.COLORS[i%T.COLORS.length], marginBottom:4 }}>{p.name}</div>
+                        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>${(split.finals[p.id]||0).toFixed(2)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginTop:10, fontSize:11, color:T.muted, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
+                    <span>Grand Total</span>
+                    <span style={{ fontWeight:700, color:T.text }}>${split.grandTotal.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── PEOPLE ── */}
+      <div style={{ padding:'14px 20px', borderBottom:`1px solid ${T.border}` }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+          <SecLabel>People</SecLabel>
+          {hasPeople && !showGroups && (
+            <button onClick={()=>{ setShowGroups(true); setShowGroupInput(true); }}
+              style={{ ...ghBtn({ padding:'4px 10px', fontSize:9, display:'flex', alignItems:'center', gap:4 }) }}>
+              <i className="ti ti-device-floppy" style={{ fontSize:12 }} aria-hidden="true"/>
+              Save as group
+            </button>
+          )}
+        </div>
+
+        {/* Group quick-load chips */}
+        {savedGroups.length > 0 && (
+          <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:10 }}>
+            {savedGroups.map(group => (
+              <button key={group.id} className="group-chip" onClick={()=>loadGroup(group)}
+                style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:100, border:`1px solid ${T.accent}44`, background:`${T.accent}11`, color:T.accent, fontSize:10, fontWeight:600, cursor:'pointer', fontFamily:'"Urbanist",sans-serif', transition:'all 0.15s' }}>
+                <i className="ti ti-users" style={{ fontSize:12 }} aria-hidden="true"/>
+                {group.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+          <input style={{ ...solidInput({ width:140 }) }} placeholder="Add person..."
+            value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addPerson()} />
+          <button onClick={addPerson}
+            style={{ background:T.btnBg, color:T.btnText, border:'none', borderRadius:2, padding:'7px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:13, fontWeight:700, cursor:'pointer', lineHeight:1 }}>
+            +
+          </button>
+          {people.map(p => (
+            <div key={p.id} style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 10px 5px 8px', borderRadius:100, border:`1px solid ${p.color}44`, background:`${p.color}11`, color:p.color, fontSize:12, fontWeight:500 }}>
+              <span style={{ width:6, height:6, borderRadius:'50%', background:p.color, flexShrink:0 }}/>
+              {p.name}
+              <button onClick={()=>removePerson(p.id)} style={{ background:'none', border:'none', color:p.color, cursor:'pointer', fontSize:15, lineHeight:1, padding:0, opacity:0.5, marginLeft:2 }}>×</button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── DATE ── */}
+      <div style={{ padding:'12px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', alignItems:'center', gap:12 }}>
+        <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, flexShrink:0 }}>Date</div>
+        <input type="date" value={orderDate} onChange={e=>setOrderDate(e.target.value)}
+          style={{ background:'none', border:'none', color: orderDate ? T.text : T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:12, outline:'none', cursor:'pointer', padding:'2px 0', colorScheme: dark ? 'dark' : 'light' }} />
+        {orderDate && (
+          <span style={{ fontSize:10, color:T.muted }}>
+            {new Date(orderDate+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})}
+          </span>
+        )}
+        {orderDate && (
+          <button onClick={()=>setOrderDate('')} style={{ background:'none', border:'none', color:T.muted, cursor:'pointer', fontSize:14, lineHeight:1, padding:0, opacity:0.5, marginLeft:'auto' }}>×</button>
+        )}
+      </div>
+
+      {/* ── BILL ── */}
+      <div style={{ padding:'0 20px' }}>
+
+        {!hasItems && (
+          <>
+            <div onClick={()=>!scanning&&fileRef.current.click()}
+              style={{ border:`1px dashed ${scanning?T.accent:T.border}`, borderRadius:2, padding:'40px 20px', textAlign:'center', cursor:scanning?'default':'pointer', margin:'20px 0', transition:'border-color 0.2s' }}>
+              <div style={{ fontSize:11, color:scanning?T.accent:T.muted, letterSpacing:'0.16em', marginBottom:5 }}>
+                {scanning ? 'SCANNING...' : 'UPLOAD BILL / RECEIPT'}
+              </div>
+              <div style={{ fontSize:10, color:T.muted2 }}>
+                {scanning ? 'Extracting line items...' : 'Claude auto-detects items · or add manually below'}
+              </div>
+            </div>
+            {addingItem ? (
+              <div style={{ display:'flex', gap:8, marginBottom:16 }}>
+                <input style={{ ...solidInput({ flex:2 }) }} placeholder="Item name..." value={newItem.name}
+                  onChange={e=>setNewItem(p=>({...p,name:e.target.value}))} autoFocus onKeyDown={e=>e.key==='Enter'&&addItemManually()} />
+                <input type="number" style={{ ...solidInput({ width:60 }) }} placeholder="Qty" value={newItem.qty} onChange={e=>setNewItem(p=>({...p,qty:e.target.value}))} />
+                <input type="number" style={{ ...solidInput({ width:90 }) }} placeholder="$0.00" value={newItem.price} onChange={e=>setNewItem(p=>({...p,price:e.target.value}))} step="0.01" />
+                <button onClick={addItemManually} style={{ background:T.btnBg, color:T.btnText, border:'none', borderRadius:2, padding:'8px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, cursor:'pointer' }}>Add</button>
+                <button onClick={()=>setAddingItem(false)} style={ghBtn()}>Cancel</button>
+              </div>
+            ) : (
+              <button onClick={()=>setAddingItem(true)} style={{ ...ghBtn(), marginBottom:16 }}>+ Add item manually</button>
+            )}
+          </>
+        )}
+
+        {hasItems && (
+          <div style={{ marginTop:20 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 52px 90px 1fr', gap:8, padding:'0 6px 8px', borderBottom:`1px solid ${T.border}` }}>
+              {['Item','Qty','Price','Who ordered?'].map((h,i) => (
+                <div key={i} style={{ fontSize:9, fontWeight:700, letterSpacing:'0.18em', textTransform:'uppercase', color:T.muted }}>{h}</div>
+              ))}
+            </div>
+
+            {items.map(item => {
+              const warn = hasPeople && Object.keys(item.assignedTo).length === 0;
+              return (
+                <div key={item.id} className="item-row"
+                  style={{ display:'grid', gridTemplateColumns:'1fr 52px 90px 1fr', gap:8, padding:'8px 6px', borderBottom:`1px solid ${T.border2}`, alignItems:'center', borderLeft:`2px solid ${warn?T.warnText+'55':'transparent'}`, transition:'background 0.15s' }}>
+                  <input value={item.name} onChange={e=>updateItem(item.id,'name',e.target.value)} style={inp()} onFocus={focusBorder} onBlur={blurBorder}/>
+                  <input type="number" min="1" value={item.qty} onChange={e=>updateItem(item.id,'qty',parseInt(e.target.value)||1)} style={inp({textAlign:'center'})} onFocus={focusBorder} onBlur={blurBorder}/>
+                  <div style={{ display:'flex', alignItems:'center', gap:2 }}>
+                    <span style={{ fontSize:11, color:T.muted, flexShrink:0 }}>$</span>
+                    <input type="number" min="0" step="0.01" value={item.price} onChange={e=>updateItem(item.id,'price',parseFloat(e.target.value)||0)} style={inp()} onFocus={focusBorder} onBlur={blurBorder}/>
+                  </div>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:4, alignItems:'center' }}>
+                    {people.map(p => {
+                      const assignedQty = item.assignedTo[p.id] || 0;
+                      const checked = assignedQty > 0;
+                      const multiQty = parseInt(item.qty) > 1;
+                      return multiQty ? (
+                        <div key={p.id} style={{ display:'flex', alignItems:'center', gap:0, borderRadius:100, border:`1px solid ${checked?p.color:p.color+'33'}`, background:checked?p.color+'1a':'transparent', overflow:'hidden', opacity:checked?1:0.35, transition:'all 0.15s' }}>
+                          <button onClick={()=>setPersonQty(item.id,p.id,assignedQty-1)}
+                            style={{ background:'none', border:'none', color:p.color, cursor:'pointer', padding:'3px 7px', fontSize:12, fontWeight:700, lineHeight:1, fontFamily:'"Urbanist",sans-serif' }}>−</button>
+                          <span style={{ fontSize:10, color:p.color, minWidth:14, textAlign:'center', fontWeight:600 }}
+                            onClick={()=>!checked&&setPersonQty(item.id,p.id,1)}>
+                            {checked ? `${p.name} ×${assignedQty}` : p.name}
+                          </span>
+                          <button onClick={()=>setPersonQty(item.id,p.id,assignedQty+1)}
+                            style={{ background:'none', border:'none', color:p.color, cursor:'pointer', padding:'3px 7px', fontSize:12, fontWeight:700, lineHeight:1, fontFamily:'"Urbanist",sans-serif' }}>+</button>
+                        </div>
+                      ) : (
+                        <div key={p.id} className="chip" onClick={()=>toggleAssign(item.id,p.id)}
+                          style={{ display:'flex', alignItems:'center', gap:3, padding:'3px 8px', borderRadius:100, border:`1px solid ${checked?p.color:p.color+'33'}`, background:checked?p.color+'1a':'transparent', color:p.color, fontSize:10, cursor:'pointer', userSelect:'none', opacity:checked?1:0.3, transition:'all 0.15s', whiteSpace:'nowrap' }}>
+                          {checked?'–':'+'} {p.name}
+                        </div>
+                      );
+                    })}
+                    <button onClick={()=>removeItem(item.id)} style={{ background:'none', border:'none', color:T.muted, cursor:'pointer', fontSize:16, lineHeight:1, padding:'0 2px', opacity:0.35, marginLeft:2 }}>×</button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Discount */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 52px 90px 1fr', gap:8, padding:'10px 6px', borderBottom:`1px solid ${T.border}`, alignItems:'center', borderLeft:'2px solid transparent' }}>
+              <div style={{ fontSize:11, color:T.discountC, fontWeight:600 }}>Discount</div>
+              <div/>
+              <div style={{ display:'flex', alignItems:'center', gap:2 }}>
+                <span style={{ fontSize:11, color:T.discountC, flexShrink:0 }}>−$</span>
+                <input type="number" min="0" step="0.01" value={discount.amount}
+                  onChange={e=>setDiscount(p=>({...p,amount:e.target.value}))} placeholder="0.00"
+                  style={{ ...inp(), color:T.discountC }} onFocus={focusBorder} onBlur={blurBorder}/>
+              </div>
+              <div style={{ display:'flex', gap:4 }}>
+                {['equal','prop'].map(m => {
+                  const active = discount.method===(m==='equal'?'equal':'proportional');
+                  return (
+                    <button key={m} onClick={()=>setDiscount(p=>({...p,method:m==='equal'?'equal':'proportional'}))}
+                      style={{ padding:'3px 8px', background:active?T.accent:'none', color:active?T.accentText:T.muted, border:`1px solid ${active?T.accent:T.ghostBorder}`, borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:9, fontWeight:700, letterSpacing:'0.08em', cursor:'pointer', textTransform:'uppercase', transition:'all 0.15s' }}>
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Add / upload more */}
+            <div style={{ display:'flex', gap:8, padding:'12px 0' }}>
+              {addingItem ? (
+                <>
+                  <input style={{ ...solidInput({ flex:2 }) }} placeholder="Item name..." value={newItem.name}
+                    onChange={e=>setNewItem(p=>({...p,name:e.target.value}))} autoFocus onKeyDown={e=>e.key==='Enter'&&addItemManually()} />
+                  <input type="number" style={{ ...solidInput({ width:60 }) }} placeholder="Qty" value={newItem.qty} onChange={e=>setNewItem(p=>({...p,qty:e.target.value}))} />
+                  <input type="number" style={{ ...solidInput({ width:90 }) }} placeholder="$0.00" value={newItem.price} onChange={e=>setNewItem(p=>({...p,price:e.target.value}))} step="0.01" />
+                  <button onClick={addItemManually} style={{ background:T.btnBg, color:T.btnText, border:'none', borderRadius:2, padding:'7px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, cursor:'pointer' }}>Add</button>
+                  <button onClick={()=>setAddingItem(false)} style={ghBtn()}>Cancel</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={()=>setAddingItem(true)} style={ghBtn()}>+ Add item</button>
+                  <button onClick={()=>fileRef.current.click()} style={ghBtn()}>+ Upload more</button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {hasItems && hasPeople && unassigned > 0 && (
+          <div style={{ padding:'8px 12px', background:T.warnBg, border:`1px solid ${T.warnBorder}`, borderRadius:2, fontSize:11, color:T.warnText, marginTop:4, marginBottom:16 }}>
+            {unassigned} item{unassigned>1?'s':''} not yet assigned
+          </div>
+        )}
+
+        {/* ── TOTALS ── */}
+        {hasItems && hasPeople && (
+          <div style={{ marginTop:8, paddingTop:20, borderTop:`1px solid ${T.border}` }}>
+            <SecLabel>Split</SecLabel>
+            <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
+              {people.map(p => {
+                const myItems = items.filter(i => (i.assignedTo[p.id]||0) > 0);
+                const sub = subtotals[p.id] || 0;
+                const disc = discounts[p.id] || 0;
+                const final = finals[p.id] || 0;
+                return (
+                  <div key={p.id} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, borderLeft:`3px solid ${p.color}`, overflow:'hidden' }}>
+                    {/* Person header */}
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 14px 10px' }}>
+                      <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:p.color }}>{p.name}</div>
+                      <div style={{ fontSize:22, fontWeight:800, color:T.text }}>${final.toFixed(2)}</div>
+                    </div>
+                    {/* Item rows */}
+                    {myItems.length > 0 && (
+                      <div style={{ borderTop:`1px solid ${T.border2}`, padding:'8px 14px 4px' }}>
+                        {myItems.map(item => {
+                          const qty = item.assignedTo[p.id];
+                          const lineTotal = parseFloat(item.price) * qty;
+                          const totalQty = parseInt(item.qty) || 1;
+                          const isShared = Object.keys(item.assignedTo).length > 1;
+                          return (
+                            <div key={item.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'4px 0', borderBottom:`1px solid ${T.border2}` }}>
+                              <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+                                <span style={{ fontSize:11, color:T.text }}>{item.name}</span>
+                                {(qty > 1 || isShared) && (
+                                  <span style={{ fontSize:9, color:T.muted, letterSpacing:'0.06em' }}>
+                                    ×{qty}{isShared ? ` of ${totalQty}` : ''}
+                                  </span>
+                                )}
+                              </div>
+                              <span style={{ fontSize:11, color:T.text, fontWeight:500 }}>${lineTotal.toFixed(2)}</span>
+                            </div>
+                          );
+                        })}
+                        {/* Subtotal */}
+                        <div style={{ display:'flex', justifyContent:'space-between', padding:'6px 0 2px', fontSize:10, color:T.muted }}>
+                          <span>Subtotal</span>
+                          <span>${sub.toFixed(2)}</span>
+                        </div>
+                        {/* Discount */}
+                        {disc > 0 && (
+                          <div style={{ display:'flex', justifyContent:'space-between', padding:'2px 0 6px', fontSize:10, color:T.discountC }}>
+                            <span>Discount ({discount.method})</span>
+                            <span>−${disc.toFixed(2)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:14, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:14 }}>
+              <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted }}>Grand Total</div>
+              <div style={{ fontSize:22, fontWeight:800 }}>${grandTotal.toFixed(2)}</div>
+            </div>
+
+            {showSaveInput && (
+              <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+                <input style={{ ...solidInput({ flex:1 }) }} placeholder="Name this split... (e.g. Weee! May 22)"
+                  value={savingName} onChange={e=>setSavingName(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&saveSplit()} autoFocus />
+                <button onClick={saveSplit}
+                  style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'8px 16px', fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, cursor:'pointer' }}>
+                  Save
+                </button>
+                <button onClick={()=>setShowSaveInput(false)} style={ghBtn({ padding:'8px 12px' })}>Cancel</button>
+              </div>
+            )}
+
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={exportSplit}
+                style={{ flex:1, padding:13, background:T.accent, color:T.accentText, border:'none', borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:12, fontWeight:700, letterSpacing:'0.1em', cursor:'pointer' }}>
+                {copied ? '— COPIED' : 'COPY SPLIT ↗'}
+              </button>
+              <button onClick={()=>{ setShowSaveInput(s=>!s); setSaveStatus(''); }}
+                style={{ ...ghBtn({ padding:'13px 18px', display:'flex', alignItems:'center', gap:6 }), background:saveStatus==='saved'?T.accent:'none', color:saveStatus==='saved'?T.accentText:T.ghostText, border:`1px solid ${saveStatus==='saved'?T.accent:T.ghostBorder}` }}>
+                <i className={`ti ti-${saveStatus==='saved'?'check':'bookmark'}`} style={{ fontSize:14 }} aria-hidden="true"/>
+                {saveStatus==='saved' ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
