@@ -566,6 +566,22 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* ── BOTTOM NAV HOME ── */}
+      <div style={{ position:'fixed', bottom:0, left:0, right:0, background:T.surface, borderTop:`1px solid ${T.border}`, display:'flex', zIndex:100 }}>
+        {[
+          { icon:'home', label:'Home', active: true, action:() => {} },
+          { icon:'plus', label:'New Split', action:() => { resetSplit(); setPage('split'); } },
+          { icon:'bookmark', label:`Saved${savedSplits.length>0?' ('+savedSplits.length+')':''}`, action:() => { setPage('split'); setTimeout(()=>setShowSaved(true),50); } },
+          { icon:'users', label:`Groups${savedGroups.length>0?' ('+savedGroups.length+')':''}`, action:() => { setPage('split'); setTimeout(()=>setShowGroups(true),50); } },
+        ].map((item, i) => (
+          <button key={i} onClick={item.action}
+            style={{ flex:1, padding:'10px 4px 8px', background:'none', border:'none', cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:3, color: item.active ? T.accent : T.muted, transition:'color 0.15s' }}>
+            <i className={`ti ti-${item.icon}`} style={{ fontSize:18 }} aria-hidden="true"/>
+            <span style={{ fontSize:9, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', fontFamily:'"Urbanist",sans-serif' }}>{item.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 
@@ -587,12 +603,6 @@ export default function App() {
           </div>
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          <HeaderBtn onClick={()=>{ setShowGroups(s=>!s); setShowSaved(false); setShowDashboard(false); }} active={showGroups} icon="users" label="Groups" count={savedGroups.length} />
-          <HeaderBtn onClick={()=>{ setShowDashboard(s=>!s); setShowGroups(false); setShowSaved(false); }} active={showDashboard} icon="chart-bar" label="Dashboard" count={0} />
-          <HeaderBtn onClick={()=>{ setShowSaved(s=>!s); setShowGroups(false); }} active={showSaved} icon="bookmark" label="Saved" count={savedSplits.length} />
-          <button onClick={resetSplit} style={{ background:'none', border:`1px solid ${T.ghostBorder}`, borderRadius:2, padding:'7px 12px', cursor:'pointer', color:T.ghostText, fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, letterSpacing:'0.08em', display:'flex', alignItems:'center', gap:5 }}>
-            <i className="ti ti-plus" style={{ fontSize:14 }} aria-hidden="true"/> New
-          </button>
           <button onClick={()=>setDark(d=>!d)}
             style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted, display:'flex', alignItems:'center' }}>
             {dark
@@ -1238,6 +1248,22 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* ── BOTTOM NAV ── */}
+      <div style={{ position:'fixed', bottom:0, left:0, right:0, background:T.surface, borderTop:`1px solid ${T.border}`, display:'flex', zIndex:100 }}>
+        {[
+          { icon:'home', label:'Home', action:() => setPage('home') },
+          { icon:'plus', label:'New', action:() => { resetSplit(); } },
+          { icon:'bookmark', label:`Saved${savedSplits.length>0?' ('+savedSplits.length+')':''}`, action:() => { setShowSaved(s=>!s); setShowGroups(false); setShowDashboard(false); }, active: showSaved },
+          { icon:'users', label:`Groups${savedGroups.length>0?' ('+savedGroups.length+')':''}`, action:() => { setShowGroups(s=>!s); setShowSaved(false); setShowDashboard(false); }, active: showGroups },
+        ].map((item, i) => (
+          <button key={i} onClick={item.action}
+            style={{ flex:1, padding:'10px 4px 8px', background:'none', border:'none', cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:3, color: item.active ? T.accent : T.muted, transition:'color 0.15s' }}>
+            <i className={`ti ti-${item.icon}`} style={{ fontSize:18 }} aria-hidden="true"/>
+            <span style={{ fontSize:9, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', fontFamily:'"Urbanist",sans-serif' }}>{item.label}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
