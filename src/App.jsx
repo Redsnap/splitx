@@ -69,7 +69,8 @@ export default function App() {
   const [page, setPage]                 = useState('home');
   const [showDashboard, setShowDashboard] = useState(false);
   const [dashGroup, setDashGroup]       = useState(null);
-  const [graphFilter, setGraphFilter]   = useState('all'); // 'all','month','3months'
+  const [graphFilter, setGraphFilter]   = useState('all');
+  const [homeTab, setHomeTab]           = useState('groups'); // 'groups' | 'owed' // 'all','month','3months'
   const [updateStatus, setUpdateStatus]   = useState('');
   const [splitView, setSplitView]   = useState('breakdown'); // 'breakdown' | 'settle'
   const [newName, setNewName]     = useState('');
@@ -569,7 +570,7 @@ export default function App() {
                         </div>
                       )}
                       {transactions.map((t,idx) => (
-                        <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom: idx < transactions.length-1 ? `1px solid ${T.border2}` : 'none' }}>
+                        <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom:`1px solid ${T.border2}` }}>
                           <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, flexWrap:'wrap' }}>
                             <span style={{ fontWeight:700, color:t.from.color }}>{t.from.name}</span>
                             <span style={{ color:T.muted, fontSize:10 }}>owes</span>
@@ -578,6 +579,23 @@ export default function App() {
                           <span style={{ fontSize:16, fontWeight:800, color:T.text, flexShrink:0, marginLeft:8 }}>${t.amount.toFixed(2)}</span>
                         </div>
                       ))}
+                      {/* Gets back summary */}
+                      {transactions.length > 0 && (() => {
+                        const credited = {};
+                        transactions.forEach(t => { credited[t.to.name] = (credited[t.to.name]||0) + t.amount; });
+                        return Object.entries(credited).map(([name, amt], idx) => {
+                          const person = group.members.find(m => m.name === name);
+                          const color = person ? T.COLORS[group.members.indexOf(person) % T.COLORS.length] : T.accent;
+                          return (
+                            <div key={`cr-${idx}`} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderTop:`1px solid ${T.border}`, marginTop:4 }}>
+                              <div style={{ fontSize:11, color:T.muted }}>
+                                <span style={{ fontWeight:700, color }}>{name}</span> gets back
+                              </div>
+                              <span style={{ fontSize:14, fontWeight:800, color:T.accent }}>${amt.toFixed(2)}</span>
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
                 );
@@ -605,6 +623,7 @@ export default function App() {
             )}
           </div>
         )}
+
       </div>
 
       {/* ── BOTTOM NAV HOME ── */}
