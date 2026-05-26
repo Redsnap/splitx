@@ -64,6 +64,7 @@ export default function App() {
   const [discount, setDiscount]   = useState({ amount:'', method:'equal' });
   const [orderDate, setOrderDate] = useState('');
   const [paidBy, setPaidBy]       = useState('');
+  const [splitView, setSplitView]   = useState('breakdown'); // 'breakdown' | 'settle'
   const [newName, setNewName]     = useState('');
   const [scanning, setScanning]   = useState(false);
   const [copied, setCopied]       = useState(false);
@@ -357,6 +358,7 @@ export default function App() {
     setDiscount({ amount:'', method:'equal' });
     setOrderDate('');
     setPaidBy('');
+    setSplitView('breakdown');
   };
 
   const loadSplit = (split) => {
@@ -746,7 +748,15 @@ export default function App() {
         {/* ── TOTALS ── */}
         {hasItems && hasPeople && (
           <div style={{ marginTop:8, paddingTop:20, borderTop:`1px solid ${T.border}` }}>
-            <SecLabel>Split</SecLabel>
+            {/* Split tabs */}
+            <div style={{ display:'flex', gap:0, marginBottom:16, border:`1px solid ${T.border}`, borderRadius:2, overflow:'hidden' }}>
+              {['breakdown','settle'].map(v => (
+                <button key={v} onClick={() => setSplitView(v)}
+                  style={{ flex:1, padding:'8px', background: splitView===v ? T.btnBg : 'none', color: splitView===v ? T.btnText : T.muted, border:'none', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, letterSpacing:'0.12em', textTransform:'uppercase', cursor:'pointer', transition:'all 0.15s' }}>
+                  {v === 'breakdown' ? 'Breakdown' : 'Settle Up'}
+                </button>
+              ))}
+            </div>
 
             {/* Who paid */}
             <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14, padding:'10px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2 }}>
@@ -761,7 +771,8 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
+            {splitView === 'breakdown' && (
+              <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
               {people.map(p => {
                 const myItems = items.filter(i => (i.assignedTo[p.id]||0) > 0);
                 const sub = subtotals[p.id] || 0;
@@ -829,10 +840,67 @@ export default function App() {
                 );
               })}
             </div>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:14, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:14 }}>
-              <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted }}>Grand Total</div>
-              <div style={{ fontSize:22, fontWeight:800 }}>${grandTotal.toFixed(2)}</div>
-            </div>
+            {splitView === 'breakdown' && (
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:14, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:14 }}>
+                <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted }}>Grand Total</div>
+                <div style={{ fontSize:22, fontWeight:800 }}>${grandTotal.toFixed(2)}</div>
+              </div>
+            )}
+
+            {splitView === 'settle' && (() => {
+              // Calculate net balances
+              const balances = {};
+              people.forEach(p => { balances[p.id] = -(finals[p.id] || 0); });
+              if (paidBy) { balances[paidBy] = (balances[paidBy] || 0) + grandTotal; }
+
+              // Simplify debts
+              const transactions = [];
+              const debtors = people.filter(p => balances[p.id] < -0.01).map(p => ({ id:p.id, name:p.name, color:p.color, amount: balances[p.id] }));
+              const creditors = people.filter(p => balances[p.id] > 0.01).map(p => ({ id:p.id, name:p.name, color:p.color, amount: balances[p.id] }));
+
+              let i = 0, j = 0;
+              const d = debtors.map(x => ({...x}));
+              const c = creditors.map(x => ({...x}));
+              while (i < d.length && j < c.length) {
+                const amount = Math.min(-d[i].amount, c[j].amount);
+                if (amount > 0.01) {
+                  transactions.push({ from: d[i], to: c[j], amount });
+                }
+                d[i].amount += amount;
+                c[j].amount -= amount;
+                if (Math.abs(d[i].amount) < 0.01) i++;
+                if (Math.abs(c[j].amount) < 0.01) j++;
+              }
+
+              return (
+                <div style={{ marginBottom:14 }}>
+                  {!paidBy && (
+                    <div style={{ padding:'10px 14px', background:T.warnBg, border:`1px solid ${T.warnBorder}`, borderRadius:2, fontSize:11, color:T.warnText, marginBottom:12 }}>
+                      Select who paid above to see settlement
+                    </div>
+                  )}
+                  {paidBy && transactions.length === 0 && (
+                    <div style={{ padding:'10px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, fontSize:11, color:T.muted, textAlign:'center' }}>
+                      All settled!
+                    </div>
+                  )}
+                  {transactions.map((t, idx) => (
+                    <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:6 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                        <span style={{ fontSize:12, fontWeight:600, color:t.from.color }}>{t.from.name}</span>
+                        <span style={{ fontSize:10, color:T.muted }}>pays</span>
+                        <span style={{ fontSize:12, fontWeight:600, color:t.to.color }}>{t.to.name}</span>
+                      </div>
+                      <span style={{ fontSize:18, fontWeight:800, color:T.text }}>${t.amount.toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div style={{ display:'flex', justifyContent:'space-between', padding:'10px 14px', border:`1px solid ${T.border}`, borderRadius:2, marginTop:8 }}>
+                    <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted }}>Grand Total</div>
+                    <div style={{ fontSize:18, fontWeight:800 }}>${grandTotal.toFixed(2)}</div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {showSaveInput && (
               <div style={{ display:'flex', gap:8, marginBottom:10 }}>
