@@ -839,14 +839,8 @@ export default function App() {
                   </div>
                 );
               })}
-            </div>
-            {splitView === 'breakdown' && (
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:14, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:14 }}>
-                <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted }}>Grand Total</div>
-                <div style={{ fontSize:22, fontWeight:800 }}>${grandTotal.toFixed(2)}</div>
               </div>
             )}
-
             {splitView === 'settle' && (() => {
               // Calculate net balances
               const balances = {};
