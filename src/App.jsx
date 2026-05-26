@@ -65,6 +65,8 @@ export default function App() {
   const [orderDate, setOrderDate] = useState('');
   const [paidBy, setPaidBy]       = useState('');
   const [activeSplitId, setActiveSplitId] = useState(null);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [dashGroup, setDashGroup]       = useState(null);
   const [updateStatus, setUpdateStatus]   = useState('');
   const [splitView, setSplitView]   = useState('breakdown'); // 'breakdown' | 'settle'
   const [newName, setNewName]     = useState('');
@@ -424,7 +426,8 @@ export default function App() {
           <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          <HeaderBtn onClick={()=>{ setShowGroups(s=>!s); setShowSaved(false); }} active={showGroups} icon="users" label="Groups" count={savedGroups.length} />
+          <HeaderBtn onClick={()=>{ setShowGroups(s=>!s); setShowSaved(false); setShowDashboard(false); }} active={showGroups} icon="users" label="Groups" count={savedGroups.length} />
+          <HeaderBtn onClick={()=>{ setShowDashboard(s=>!s); setShowGroups(false); setShowSaved(false); }} active={showDashboard} icon="chart-bar" label="Dashboard" count={0} />
           <HeaderBtn onClick={()=>{ setShowSaved(s=>!s); setShowGroups(false); }} active={showSaved} icon="bookmark" label="Saved" count={savedSplits.length} />
           <button onClick={resetSplit} style={{ background:'none', border:`1px solid ${T.ghostBorder}`, borderRadius:2, padding:'7px 12px', cursor:'pointer', color:T.ghostText, fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, letterSpacing:'0.08em', display:'flex', alignItems:'center', gap:5 }}>
             <i className="ti ti-plus" style={{ fontSize:14 }} aria-hidden="true"/> New
@@ -579,6 +582,128 @@ export default function App() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── DASHBOARD ── */}
+      {showDashboard && (
+        <div style={{ borderBottom:`1px solid ${T.border}`, padding:'16px 20px', background:T.surface2 }}>
+          <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:14 }}>Group Dashboard</div>
+
+          {savedGroups.length === 0 && (
+            <div style={{ fontSize:12, color:T.muted, padding:'8px 0' }}>No saved groups yet. Create a group first.</div>
+          )}
+
+          {/* Group selector */}
+          {savedGroups.length > 0 && (
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:16 }}>
+              {savedGroups.map(g => (
+                <button key={g.id} onClick={() => setDashGroup(dashGroup?.id === g.id ? null : g)}
+                  style={{ padding:'5px 14px', background: dashGroup?.id===g.id ? T.accent : 'none', color: dashGroup?.id===g.id ? T.accentText : T.muted, border:`1px solid ${dashGroup?.id===g.id ? T.accent : T.ghostBorder}`, borderRadius:100, fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:600, cursor:'pointer', transition:'all 0.15s' }}>
+                  {g.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Dashboard content for selected group */}
+          {dashGroup && (() => {
+            const memberIds = dashGroup.members.map(m => m.id);
+            const memberNames = {};
+            dashGroup.members.forEach((m,i) => { memberNames[m.id] = { name:m.name, color:T.COLORS[i%T.COLORS.length] }; });
+
+            // Find all splits that include ALL members of this group
+            const groupSplits = savedSplits.filter(s =>
+              dashGroup.members.every(m => s.people.some(p => p.name === m.name))
+            );
+
+            if (groupSplits.length === 0) return (
+              <div style={{ fontSize:12, color:T.muted, padding:'8px 0' }}>No saved splits found for this group.</div>
+            );
+
+            // Aggregate balances across all splits
+            const netBalances = {};
+            dashGroup.members.forEach(m => { netBalances[m.name] = 0; });
+
+            groupSplits.forEach(split => {
+              if (!split.paidBy) return;
+              const payer = split.people.find(p => p.id === split.paidBy);
+              if (!payer) return;
+              split.people.forEach(p => {
+                if (p.id === split.paidBy) return;
+                const owes = split.finals[p.id] || 0;
+                if (netBalances[p.name] !== undefined) netBalances[p.name] -= owes;
+                if (netBalances[payer.name] !== undefined) netBalances[payer.name] += owes;
+              });
+            });
+
+            // Simplify debts
+            const entries = dashGroup.members.map((m,i) => ({ name:m.name, color:T.COLORS[i%T.COLORS.length], amount:netBalances[m.name]||0 }));
+            const debtors = entries.filter(e => e.amount < -0.01).map(e => ({...e}));
+            const creditors = entries.filter(e => e.amount > 0.01).map(e => ({...e}));
+            const transactions = [];
+            let i = 0, j = 0;
+            while (i < debtors.length && j < creditors.length) {
+              const amount = Math.min(-debtors[i].amount, creditors[j].amount);
+              if (amount > 0.01) transactions.push({ from:debtors[i], to:creditors[j], amount });
+              debtors[i].amount += amount;
+              creditors[j].amount -= amount;
+              if (Math.abs(debtors[i].amount) < 0.01) i++;
+              if (Math.abs(creditors[j].amount) < 0.01) j++;
+            }
+
+            const totalSpent = groupSplits.reduce((a,s) => a + (s.grandTotal||0), 0);
+
+            return (
+              <div>
+                {/* Stats */}
+                <div style={{ display:'flex', gap:8, marginBottom:14, flexWrap:'wrap' }}>
+                  <div style={{ flex:'1 1 100px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'10px 14px' }}>
+                    <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, marginBottom:4 }}>Total Spent</div>
+                    <div style={{ fontSize:20, fontWeight:800, color:T.text }}>${totalSpent.toFixed(2)}</div>
+                  </div>
+                  <div style={{ flex:'1 1 100px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'10px 14px' }}>
+                    <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, marginBottom:4 }}>Splits</div>
+                    <div style={{ fontSize:20, fontWeight:800, color:T.text }}>{groupSplits.length}</div>
+                  </div>
+                </div>
+
+                {/* Settlements */}
+                <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:10 }}>Overall Settlement</div>
+                {transactions.length === 0 ? (
+                  <div style={{ padding:'10px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, fontSize:12, color:T.muted, textAlign:'center' }}>
+                    All settled! {groupSplits.filter(s=>!s.paidBy).length > 0 ? `(${groupSplits.filter(s=>!s.paidBy).length} splits missing payer info)` : ''}
+                  </div>
+                ) : (
+                  transactions.map((t,idx) => (
+                    <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:6 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                        <span style={{ fontSize:13, fontWeight:700, color:t.from.color }}>{t.from.name}</span>
+                        <span style={{ fontSize:10, color:T.muted }}>owes</span>
+                        <span style={{ fontSize:13, fontWeight:700, color:t.to.color }}>{t.to.name}</span>
+                      </div>
+                      <span style={{ fontSize:20, fontWeight:800, color:T.text }}>${t.amount.toFixed(2)}</span>
+                    </div>
+                  ))
+                )}
+
+                {/* Split history */}
+                <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, margin:'16px 0 10px' }}>Split History</div>
+                {groupSplits.map(s => (
+                  <div key={s.id} style={{ padding:'10px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:6, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{s.name}</div>
+                      <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>{s.date} · ${s.grandTotal.toFixed(2)}</div>
+                    </div>
+                    <button onClick={() => { loadSplit(s); setShowDashboard(false); }}
+                      style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'5px 12px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer' }}>
+                      Load
+                    </button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 
