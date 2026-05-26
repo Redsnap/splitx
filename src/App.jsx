@@ -10,6 +10,7 @@ iconsLink.rel = 'stylesheet';
 iconsLink.href = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css';
 document.head.appendChild(iconsLink);
 
+
 const styleEl = document.createElement('style');
 document.head.appendChild(styleEl);
 
@@ -68,6 +69,7 @@ export default function App() {
   const [page, setPage]                 = useState('home');
   const [showDashboard, setShowDashboard] = useState(false);
   const [dashGroup, setDashGroup]       = useState(null);
+  const [graphFilter, setGraphFilter]   = useState('all'); // 'all','month','3months'
   const [updateStatus, setUpdateStatus]   = useState('');
   const [splitView, setSplitView]   = useState('breakdown'); // 'breakdown' | 'settle'
   const [newName, setNewName]     = useState('');
@@ -375,6 +377,7 @@ export default function App() {
     } catch(e) { console.error(e); }
   };
 
+
   const resetSplit = () => {
     setPeople([]);
     setItems([]);
@@ -446,6 +449,43 @@ export default function App() {
       if (Math.abs(c[j].amount) < 0.01) j++;
     }
     return { groupSplits, totalSpent, transactions };
+  };
+
+  const filterSplits = (splits) => {
+    const now = new Date();
+    if (graphFilter === 'month') {
+      return splits.filter(s => {
+        if (!s.orderDate) return false;
+        const d = new Date(s.orderDate);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      });
+    }
+    if (graphFilter === '3months') {
+      const cutoff = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+      return splits.filter(s => {
+        if (!s.orderDate) return false;
+        return new Date(s.orderDate) >= cutoff;
+      });
+    }
+    return splits;
+  };
+
+  const BarChart = ({ data, color, label }) => {
+    const max = Math.max(...data.map(d => d.value), 0.01);
+    return (
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.18em', textTransform:'uppercase', color:T.muted, marginBottom:10 }}>{label}</div>
+        <div style={{ display:'flex', alignItems:'flex-end', gap:6, height:80 }}>
+          {data.map((d, i) => (
+            <div key={i} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
+              <div style={{ fontSize:9, color:T.text, fontWeight:600 }}>${d.value.toFixed(0)}</div>
+              <div style={{ width:'100%', background:d.color || color, borderRadius:2, height:`${Math.max((d.value/max)*60, 2)}px`, transition:'height 0.4s ease', minHeight:2 }}/>
+              <div style={{ fontSize:9, color:T.muted, textAlign:'center', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', width:'100%' }}>{d.name}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   // ── HOME PAGE ──
@@ -1066,6 +1106,7 @@ export default function App() {
         {/* ── TOTALS ── */}
         {hasItems && hasPeople && (
           <div style={{ marginTop:8, paddingTop:20, borderTop:`1px solid ${T.border}` }}>
+            <div>
             {/* Split tabs */}
             <div style={{ display:'flex', gap:0, marginBottom:16, border:`1px solid ${T.border}`, borderRadius:2, overflow:'hidden' }}>
               {['breakdown','settle'].map(v => (
@@ -1235,6 +1276,7 @@ export default function App() {
               </button>
             )}
 
+            </div>
             <div style={{ display:'flex', gap:8 }}>
               <button onClick={exportSplit}
                 style={{ flex:1, padding:13, background:T.accent, color:T.accentText, border:'none', borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:12, fontWeight:700, letterSpacing:'0.1em', cursor:'pointer' }}>
@@ -1245,6 +1287,7 @@ export default function App() {
                 <i className={`ti ti-${saveStatus==='saved'?'check':'bookmark'}`} style={{ fontSize:14 }} aria-hidden="true"/>
                 {saveStatus==='saved' ? 'Saved!' : 'Save'}
               </button>
+
             </div>
           </div>
         )}
