@@ -63,6 +63,7 @@ export default function App() {
   const [items, setItems]         = useState([]);
   const [discount, setDiscount]   = useState({ amount:'', method:'equal' });
   const [orderDate, setOrderDate] = useState('');
+  const [paidBy, setPaidBy]       = useState('');
   const [newName, setNewName]     = useState('');
   const [scanning, setScanning]   = useState(false);
   const [copied, setCopied]       = useState(false);
@@ -319,7 +320,7 @@ export default function App() {
     const { subtotals, discounts, finals, grandTotal } = computeTotals();
     const id = Date.now();
     const displayDate = orderDate ? new Date(orderDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-    const splitData = { id, name, savedAt:id, date:displayDate, orderDate, people, items, discount, finals, grandTotal };
+    const splitData = { id, name, savedAt:id, paidBy, date:displayDate, orderDate, people, items, discount, finals, grandTotal };
     try {
       await storage.set(`split:${id}`, JSON.stringify(splitData));
       setSavedSplits(prev => [splitData, ...prev]);
@@ -355,11 +356,13 @@ export default function App() {
     setItems([]);
     setDiscount({ amount:'', method:'equal' });
     setOrderDate('');
+    setPaidBy('');
   };
 
   const loadSplit = (split) => {
     setPeople(split.people); setItems(split.items); setDiscount(split.discount);
     if (split.orderDate) setOrderDate(split.orderDate);
+    setPaidBy(split.paidBy || '');
     setShowSaved(false);
   };
 
@@ -744,6 +747,20 @@ export default function App() {
         {hasItems && hasPeople && (
           <div style={{ marginTop:8, paddingTop:20, borderTop:`1px solid ${T.border}` }}>
             <SecLabel>Split</SecLabel>
+
+            {/* Who paid */}
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14, padding:'10px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2 }}>
+              <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, flexShrink:0 }}>Who paid?</div>
+              <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                {people.map(p => (
+                  <div key={p.id} onClick={() => setPaidBy(paidBy === p.id ? '' : p.id)}
+                    style={{ display:'flex', alignItems:'center', gap:5, padding:'4px 10px', borderRadius:100, border:`1px solid ${paidBy===p.id ? p.color : p.color+'33'}`, background:paidBy===p.id ? p.color+'1a' : 'transparent', color:p.color, fontSize:11, fontWeight:500, cursor:'pointer', userSelect:'none', transition:'all 0.15s' }}>
+                    {paidBy===p.id ? '–' : '+'} {p.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
               {people.map(p => {
                 const myItems = items.filter(i => (i.assignedTo[p.id]||0) > 0);
@@ -754,8 +771,23 @@ export default function App() {
                   <div key={p.id} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, borderLeft:`3px solid ${p.color}`, overflow:'hidden' }}>
                     {/* Person header */}
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 14px 10px' }}>
-                      <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:p.color }}>{p.name}</div>
-                      <div style={{ fontSize:22, fontWeight:800, color:T.text }}>${final.toFixed(2)}</div>
+                      <div>
+                        <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:p.color }}>{p.name}</div>
+                        {paidBy && paidBy !== p.id && people.find(x => x.id === paidBy) && (
+                          <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>
+                            owes {people.find(x => x.id === paidBy).name}
+                          </div>
+                        )}
+                        {paidBy === p.id && (
+                          <div style={{ fontSize:10, color:T.accent, marginTop:2 }}>paid the bill</div>
+                        )}
+                      </div>
+                      <div style={{ textAlign:'right' }}>
+                        <div style={{ fontSize:22, fontWeight:800, color:T.text }}>${final.toFixed(2)}</div>
+                        {paidBy === p.id && grandTotal > 0 && (
+                          <div style={{ fontSize:10, color:T.accent, marginTop:2 }}>gets back ${(grandTotal - final).toFixed(2)}</div>
+                        )}
+                      </div>
                     </div>
                     {/* Item rows */}
                     {myItems.length > 0 && (
