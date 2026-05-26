@@ -493,6 +493,7 @@ export default function App() {
   };
 
   const PieChart = ({ data, size=100, donut=false }) => {
+    const [active, setActive] = useState(null);
     const total = data.reduce((s,d) => s+d.value, 0);
     if (total === 0) return null;
     let angle = -Math.PI/2;
@@ -501,6 +502,7 @@ export default function App() {
       const start = angle;
       const sweep = (d.value/total) * 2 * Math.PI;
       angle += sweep;
+      const mid = start + sweep/2;
       const x1=Math.cos(start)*r, y1=Math.sin(start)*r;
       const x2=Math.cos(angle)*r, y2=Math.sin(angle)*r;
       const ix1=Math.cos(start)*inner, iy1=Math.sin(start)*inner;
@@ -509,25 +511,50 @@ export default function App() {
       const path = donut
         ? `M${ix1},${iy1} L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} L${ix2},${iy2} A${inner},${inner} 0 ${large},0 ${ix1},${iy1} Z`
         : `M0,0 L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} Z`;
-      return { ...d, path };
+      const pct = ((d.value/total)*100).toFixed(1);
+      return { ...d, path, mid, pct };
     });
     return (
-      <svg width={size} height={size} viewBox={`${-r} ${-r} ${size} ${size}`} style={{ flexShrink:0 }}>
-        {slices.map((s,i) => <path key={i} d={s.path} fill={s.color} stroke={dark?'#0a0a0a':'#fafaf8'} strokeWidth={1.5}/>)}
-        {donut && <text x="0" y="5" textAnchor="middle" fill={T.text} fontSize="11" fontWeight="700" fontFamily="Urbanist,sans-serif">${total.toFixed(0)}</text>}
-      </svg>
+      <div style={{ position:'relative', flexShrink:0 }}>
+        <svg width={size} height={size} viewBox={`${-r} ${-r} ${size} ${size}`} style={{ display:'block' }}>
+          {slices.map((s,i) => (
+            <path key={i} d={s.path}
+              fill={s.color}
+              stroke={dark?'#0a0a0a':'#fafaf8'}
+              strokeWidth={active===i ? 2 : 1.5}
+              transform={active===i ? `translate(${Math.cos(s.mid)*4},${Math.sin(s.mid)*4})` : ''}
+              style={{ cursor:'pointer', transition:'transform 0.15s' }}
+              onClick={() => setActive(active===i ? null : i)}
+            />
+          ))}
+          {donut && active === null && <text x="0" y="5" textAnchor="middle" fill={T.text} fontSize="11" fontWeight="700" fontFamily="Urbanist,sans-serif">${total.toFixed(0)}</text>}
+          {donut && active !== null && <>
+            <text x="0" y="-4" textAnchor="middle" fill={slices[active].color} fontSize="9" fontWeight="700" fontFamily="Urbanist,sans-serif">{slices[active].name}</text>
+            <text x="0" y="8" textAnchor="middle" fill={T.text} fontSize="10" fontWeight="700" fontFamily="Urbanist,sans-serif">${slices[active].value.toFixed(2)}</text>
+          </>}
+        </svg>
+        {active !== null && !donut && (
+          <div style={{ position:'absolute', top:-28, left:'50%', transform:'translateX(-50%)', background:T.surface, border:`1px solid ${T.border}`, borderRadius:4, padding:'3px 8px', fontSize:10, fontWeight:700, color:slices[active].color, whiteSpace:'nowrap', pointerEvents:'none' }}>
+            {slices[active].name} · ${slices[active].value.toFixed(2)} ({slices[active].pct}%)
+          </div>
+        )}
+      </div>
     );
   };
 
   const SpendBarChart = ({ data }) => {
+    const [active, setActive] = useState(null);
     const max = Math.max(...data.map(d => d.value), 0.01);
+    const total = data.reduce((s,d) => s+d.value, 0);
     return (
-      <div style={{ display:'flex', alignItems:'flex-end', gap:6, height:80, marginTop:8 }}>
+      <div style={{ display:'flex', alignItems:'flex-end', gap:6, height:90, marginTop:8 }}>
         {data.map((d,i) => (
-          <div key={i} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
-            <div style={{ fontSize:9, color:T.text, fontWeight:600 }}>${d.value.toFixed(0)}</div>
-            <div style={{ width:'100%', background:d.color, borderRadius:2, height:`${Math.max((d.value/max)*60,2)}px`, transition:'height 0.4s ease' }}/>
-            <div style={{ fontSize:9, color:T.muted, textAlign:'center', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%' }}>{d.name}</div>
+          <div key={i} onClick={() => setActive(active===i?null:i)} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4, cursor:'pointer' }}>
+            <div style={{ fontSize:9, color: active===i ? d.color : T.text, fontWeight:700 }}>
+              {active===i ? `${((d.value/total)*100).toFixed(1)}%` : `$${d.value.toFixed(0)}`}
+            </div>
+            <div style={{ width:'100%', background:d.color, borderRadius:2, height:`${Math.max((d.value/max)*60,2)}px`, transition:'all 0.2s', opacity: active===null||active===i ? 1 : 0.35, outline: active===i ? `2px solid ${d.color}` : 'none', outlineOffset:1 }}/>
+            <div style={{ fontSize:9, color: active===i ? d.color : T.muted, textAlign:'center', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%', fontWeight: active===i ? 700 : 400 }}>{d.name}</div>
           </div>
         ))}
       </div>
