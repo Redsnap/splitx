@@ -65,6 +65,7 @@ export default function App() {
   const [orderDate, setOrderDate] = useState('');
   const [paidBy, setPaidBy]       = useState('');
   const [activeSplitId, setActiveSplitId] = useState(null);
+  const [page, setPage]                 = useState('home');
   const [showDashboard, setShowDashboard] = useState(false);
   const [dashGroup, setDashGroup]       = useState(null);
   const [updateStatus, setUpdateStatus]   = useState('');
@@ -413,6 +414,161 @@ export default function App() {
     </button>
   );
 
+  const getGroupStats = (group) => {
+    const groupSplits = savedSplits.filter(s =>
+      group.members.every(m => s.people.some(p => p.name === m.name))
+    );
+    const totalSpent = groupSplits.reduce((a,s) => a + (s.grandTotal||0), 0);
+    const netBalances = {};
+    group.members.forEach(m => { netBalances[m.name] = 0; });
+    groupSplits.forEach(split => {
+      if (!split.paidBy) return;
+      const payer = split.people.find(p => p.id === split.paidBy);
+      if (!payer) return;
+      split.people.forEach(p => {
+        if (p.id === split.paidBy) return;
+        const owes = split.finals[p.id] || 0;
+        if (netBalances[p.name] !== undefined) netBalances[p.name] -= owes;
+        if (netBalances[payer.name] !== undefined) netBalances[payer.name] += owes;
+      });
+    });
+    const entries = group.members.map((m,i) => ({ name:m.name, color:T.COLORS[i%T.COLORS.length], amount:netBalances[m.name]||0 }));
+    const debtors = entries.filter(e => e.amount < -0.01).map(e => ({...e}));
+    const creditors = entries.filter(e => e.amount > 0.01).map(e => ({...e}));
+    const transactions = [];
+    let i = 0, j = 0;
+    const d = debtors.map(x=>({...x})), c = creditors.map(x=>({...x}));
+    while (i < d.length && j < c.length) {
+      const amount = Math.min(-d[i].amount, c[j].amount);
+      if (amount > 0.01) transactions.push({ from:d[i], to:c[j], amount });
+      d[i].amount += amount; c[j].amount -= amount;
+      if (Math.abs(d[i].amount) < 0.01) i++;
+      if (Math.abs(c[j].amount) < 0.01) j++;
+    }
+    return { groupSplits, totalSpent, transactions };
+  };
+
+  // ── HOME PAGE ──
+  if (page === 'home') return (
+    <div style={{ background:T.bg, minHeight:'100vh', color:T.text, fontFamily:'"Urbanist",sans-serif', transition:'background 0.2s' }}>
+      {/* Header */}
+      <div style={{ padding:'18px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <button onClick={() => setPage('home')} style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'6px 10px', cursor:'pointer', color:T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:11, display:'flex', alignItems:'center', gap:4 }}>
+            <i className="ti ti-arrow-left" style={{ fontSize:13 }} aria-hidden="true"/> Home
+          </button>
+          <div>
+            <div style={{ fontSize:20, fontWeight:800, letterSpacing:'0.06em' }}>SPLIT.IT</div>
+            <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
+          </div>
+        </div>
+        <button onClick={()=>setDark(d=>!d)}
+          style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted, display:'flex', alignItems:'center' }}>
+          {dark
+            ? <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="2.5"/><line x1="7" y1="1" x2="7" y2="2.5"/><line x1="7" y1="11.5" x2="7" y2="13"/><line x1="1" y1="7" x2="2.5" y2="7"/><line x1="11.5" y1="7" x2="13" y2="7"/><line x1="2.93" y1="2.93" x2="3.99" y2="3.99"/><line x1="10.01" y1="10.01" x2="11.07" y2="11.07"/><line x1="11.07" y1="2.93" x2="10.01" y2="3.99"/><line x1="3.99" y1="10.01" x2="2.93" y2="11.07"/></svg>
+            : <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M11.5 8.5A5 5 0 0 1 5.5 2.5a5 5 0 1 0 6 6z"/></svg>
+          }
+        </button>
+      </div>
+
+      <div style={{ padding:'20px 20px 80px' }}>
+
+        {/* New Split button */}
+        <button onClick={() => { resetSplit(); setPage('split'); }}
+          style={{ width:'100%', padding:'14px', background:T.accent, color:T.accentText, border:'none', borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:13, fontWeight:700, letterSpacing:'0.1em', cursor:'pointer', marginBottom:24, display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
+          <i className="ti ti-plus" style={{ fontSize:16 }} aria-hidden="true"/> NEW SPLIT
+        </button>
+
+        {/* Groups */}
+        {savedGroups.length === 0 ? (
+          <div style={{ textAlign:'center', padding:'60px 20px', color:T.muted2 }}>
+            <div style={{ fontSize:32, marginBottom:12 }}>
+              <i className="ti ti-users" style={{ fontSize:40, color:T.muted }} aria-hidden="true"/>
+            </div>
+            <div style={{ fontSize:13, fontWeight:600, color:T.muted, marginBottom:6 }}>No groups yet</div>
+            <div style={{ fontSize:11, color:T.muted2 }}>Create a split, add people, and save them as a group</div>
+            <button onClick={() => { resetSplit(); setPage('split'); }}
+              style={{ marginTop:16, padding:'9px 20px', background:'none', border:`1px solid ${T.ghostBorder}`, borderRadius:2, color:T.ghostText, fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:600, cursor:'pointer' }}>
+              Start a split
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:14 }}>Your Groups</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {savedGroups.map((group, gi) => {
+                const { groupSplits, totalSpent, transactions } = getGroupStats(group);
+                return (
+                  <div key={group.id} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, overflow:'hidden' }}>
+                    {/* Group header */}
+                    <div style={{ padding:'12px 16px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <div>
+                        <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:5 }}>{group.name}</div>
+                        <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
+                          {group.members.map((m,i) => (
+                            <span key={m.id} style={{ padding:'2px 8px', borderRadius:100, border:`1px solid ${T.COLORS[i%T.COLORS.length]}44`, background:`${T.COLORS[i%T.COLORS.length]}11`, color:T.COLORS[i%T.COLORS.length], fontSize:10, fontWeight:500 }}>
+                              {m.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <button onClick={() => { loadGroup(group); setPage('split'); }}
+                        style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'7px 16px', fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, cursor:'pointer', flexShrink:0, marginLeft:12 }}>
+                        + Split
+                      </button>
+                    </div>
+
+                    {/* Settlement lines */}
+                    <div style={{ padding:'10px 16px' }}>
+                      {groupSplits.length === 0 && (
+                        <div style={{ fontSize:11, color:T.muted2 }}>No splits yet</div>
+                      )}
+                      {groupSplits.length > 0 && transactions.length === 0 && (
+                        <div style={{ fontSize:11, color:T.muted, display:'flex', alignItems:'center', gap:6 }}>
+                          <i className="ti ti-check" style={{ fontSize:13, color:T.accent }} aria-hidden="true"/> All settled up · ${totalSpent.toFixed(2)} total
+                        </div>
+                      )}
+                      {transactions.map((t,idx) => (
+                        <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom: idx < transactions.length-1 ? `1px solid ${T.border2}` : 'none' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, flexWrap:'wrap' }}>
+                            <span style={{ fontWeight:700, color:t.from.color }}>{t.from.name}</span>
+                            <span style={{ color:T.muted, fontSize:10 }}>owes</span>
+                            <span style={{ fontWeight:700, color:t.to.color }}>{t.to.name}</span>
+                          </div>
+                          <span style={{ fontSize:16, fontWeight:800, color:T.text, flexShrink:0, marginLeft:8 }}>${t.amount.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Recent splits */}
+            {savedSplits.length > 0 && (
+              <div style={{ marginTop:24 }}>
+                <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:14 }}>Recent Splits</div>
+                {savedSplits.slice(0,5).map(s => (
+                  <div key={s.id} className="saved-row"
+                    style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:6, transition:'background 0.15s' }}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{s.name}</div>
+                      <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>{s.date} · {s.people.map(p=>p.name).join(', ')} · ${s.grandTotal.toFixed(2)}</div>
+                    </div>
+                    <button onClick={() => { loadSplit(s); setPage('split'); }}
+                      style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'5px 12px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer', flexShrink:0, marginLeft:12 }}>
+                      Load
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ background:T.bg, minHeight:'100vh', color:T.text, fontFamily:'"Urbanist",sans-serif', transition:'background 0.2s', paddingBottom:60 }}>
 
@@ -421,9 +577,14 @@ export default function App() {
 
       {/* ── HEADER ── */}
       <div style={{ padding:'16px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-        <div>
-          <div style={{ fontSize:20, fontWeight:800, letterSpacing:'0.06em' }}>SPLIT.IT</div>
-          <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <button onClick={() => setPage('home')} style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'6px 10px', cursor:'pointer', color:T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:11, display:'flex', alignItems:'center', gap:4 }}>
+            <i className="ti ti-arrow-left" style={{ fontSize:13 }} aria-hidden="true"/> Home
+          </button>
+          <div>
+            <div style={{ fontSize:20, fontWeight:800, letterSpacing:'0.06em' }}>SPLIT.IT</div>
+            <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
+          </div>
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <HeaderBtn onClick={()=>{ setShowGroups(s=>!s); setShowSaved(false); setShowDashboard(false); }} active={showGroups} icon="users" label="Groups" count={savedGroups.length} />
