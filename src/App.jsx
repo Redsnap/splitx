@@ -64,6 +64,8 @@ export default function App() {
   const [discount, setDiscount]   = useState({ amount:'', method:'equal' });
   const [orderDate, setOrderDate] = useState('');
   const [paidBy, setPaidBy]       = useState('');
+  const [activeSplitId, setActiveSplitId] = useState(null);
+  const [updateStatus, setUpdateStatus]   = useState('');
   const [splitView, setSplitView]   = useState('breakdown'); // 'breakdown' | 'settle'
   const [newName, setNewName]     = useState('');
   const [scanning, setScanning]   = useState(false);
@@ -330,6 +332,24 @@ export default function App() {
     } catch(e) { console.error(e); }
   };
 
+  const updateSplit = async () => {
+    if (!activeSplitId) return;
+    const { finals, grandTotal } = computeTotals();
+    try {
+      const r = await storage.get(`split:${activeSplitId}`);
+      if (!r) return;
+      const existing = JSON.parse(r.value);
+      const updated = { ...existing, people, items, discount, paidBy, finals, grandTotal,
+        orderDate: orderDate || existing.orderDate,
+        date: orderDate ? new Date(orderDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : existing.date
+      };
+      await storage.set(`split:${activeSplitId}`, JSON.stringify(updated));
+      setSavedSplits(prev => prev.map(s => s.id === activeSplitId ? updated : s));
+      setUpdateStatus('saved');
+      setTimeout(() => setUpdateStatus(''), 2000);
+    } catch(e) { console.error(e); }
+  };
+
   const deleteSplit = async (splitId) => {
     try {
       await storage.delete(`split:${splitId}`);
@@ -359,12 +379,14 @@ export default function App() {
     setOrderDate('');
     setPaidBy('');
     setSplitView('breakdown');
+    setActiveSplitId(null);
   };
 
   const loadSplit = (split) => {
     setPeople(split.people); setItems(split.items); setDiscount(split.discount);
     if (split.orderDate) setOrderDate(split.orderDate);
     setPaidBy(split.paidBy || '');
+    setActiveSplitId(split.id);
     setShowSaved(false);
   };
 
@@ -907,6 +929,14 @@ export default function App() {
                 </button>
                 <button onClick={()=>setShowSaveInput(false)} style={ghBtn({ padding:'8px 12px' })}>Cancel</button>
               </div>
+            )}
+
+            {activeSplitId && (
+              <button onClick={updateSplit}
+                style={{ width:'100%', padding:13, background: updateStatus==='saved' ? T.accent : 'none', color: updateStatus==='saved' ? T.accentText : T.ghostText, border:`1px solid ${updateStatus==='saved' ? T.accent : T.ghostBorder}`, borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:12, fontWeight:700, letterSpacing:'0.1em', cursor:'pointer', marginBottom:8, display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
+                <i className={`ti ti-${updateStatus==='saved'?'check':'device-floppy'}`} style={{ fontSize:14 }} aria-hidden="true"/>
+                {updateStatus==='saved' ? 'UPDATED!' : 'UPDATE SAVED SPLIT'}
+              </button>
             )}
 
             <div style={{ display:'flex', gap:8 }}>
