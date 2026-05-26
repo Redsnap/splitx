@@ -220,45 +220,25 @@ export default function App() {
     }));
 
   // ── Scan ──
-  const compressImage = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const max = 1024;
-        let w = img.width, h = img.height;
-        if (w > max || h > max) {
-          if (w > h) { h = Math.round(h * max / w); w = max; }
-          else { w = Math.round(w * max / h); h = max; }
-        }
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
-      };
-      img.onerror = reject;
-      img.src = e.target.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-
   const scanReceipt = async file => {
     if (!file) return;
     setScanning(true);
     try {
-      const base64 = await compressImage(file);
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result.split(',')[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64 })
+        body: JSON.stringify({ base64, mediaType: file.type })
       });
       const data = await res.json();
+      console.log('API response:', JSON.stringify(data).slice(0, 300));
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      if (!text) throw new Error('Empty response');
+      if (!text) throw new Error('Empty response: ' + JSON.stringify(data).slice(0, 200));
       const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
       if (parsed && parsed.date) setOrderDate(parsed.date);
       const parsedItems = Array.isArray(parsed) ? parsed : (parsed.items || []);
@@ -267,7 +247,7 @@ export default function App() {
         price:parseFloat(item.price)||0, qty:parseInt(item.qty)||1, assignedTo:{}
       }))]);
     } catch(err) {
-      console.error('Scan error:', err);
+      console.error('Scan error:', err.message);
     } finally {
       setScanning(false);
     }
@@ -280,12 +260,21 @@ export default function App() {
     items.forEach(item => {
       const assignedEntries = Object.entries(item.assignedTo);
       if (!assignedEntries.length) return;
-      const totalAssigned = assignedEntries.reduce((sum, [, q]) => sum + q, 0);
       const itemQty = parseInt(item.qty) || 1;
-      const scale = totalAssigned > itemQty ? itemQty / totalAssigned : 1;
-      assignedEntries.forEach(([pid, qty]) => {
-        subtotals[pid] = (subtotals[pid]||0) + parseFloat(item.price) * qty * scale;
-      });
+      const itemTotal = parseFloat(item.price) * itemQty;
+      const totalAssigned = assignedEntries.reduce((sum, [, q]) => sum + q, 0);
+      if (totalAssigned >= itemQty) {
+        // More or equal participants than qty — split total equally
+        const share = itemTotal / assignedEntries.length;
+        assignedEntries.forEach(([pid]) => {
+          subtotals[pid] = (subtotals[pid]||0) + share;
+        });
+      } else {
+        // Each person pays for their own qty
+        assignedEntries.forEach(([pid, qty]) => {
+          subtotals[pid] = (subtotals[pid]||0) + parseFloat(item.price) * qty;
+        });
+      }
     });
     const discountAmt = parseFloat(discount.amount) || 0;
     const active = people.filter(p => (subtotals[p.id]||0) > 0);
@@ -361,6 +350,13 @@ export default function App() {
     } catch(e) { console.error(e); }
   };
 
+  const resetSplit = () => {
+    setPeople([]);
+    setItems([]);
+    setDiscount({ amount:'', method:'equal' });
+    setOrderDate('');
+  };
+
   const loadSplit = (split) => {
     setPeople(split.people); setItems(split.items); setDiscount(split.discount);
     if (split.orderDate) setOrderDate(split.orderDate);
@@ -403,6 +399,9 @@ export default function App() {
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <HeaderBtn onClick={()=>{ setShowGroups(s=>!s); setShowSaved(false); }} active={showGroups} icon="users" label="Groups" count={savedGroups.length} />
           <HeaderBtn onClick={()=>{ setShowSaved(s=>!s); setShowGroups(false); }} active={showSaved} icon="bookmark" label="Saved" count={savedSplits.length} />
+          <button onClick={resetSplit} style={{ background:'none', border:`1px solid ${T.ghostBorder}`, borderRadius:2, padding:'7px 12px', cursor:'pointer', color:T.ghostText, fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, letterSpacing:'0.08em', display:'flex', alignItems:'center', gap:5 }}>
+            <i className="ti ti-plus" style={{ fontSize:14 }} aria-hidden="true"/> New
+          </button>
           <button onClick={()=>setDark(d=>!d)}
             style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted, display:'flex', alignItems:'center' }}>
             {dark
