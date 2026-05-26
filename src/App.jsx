@@ -70,7 +70,10 @@ export default function App() {
   const [showDashboard, setShowDashboard] = useState(false);
   const [dashGroup, setDashGroup]       = useState(null);
   const [graphFilter, setGraphFilter]   = useState('all');
-  const [homeTab, setHomeTab]           = useState('groups'); // 'groups' | 'owed' // 'all','month','3months'
+  const [homeTab, setHomeTab]           = useState('groups');
+  const [chartGroup, setChartGroup]     = useState(null);
+  const [chartType, setChartType]       = useState('donut'); // 'donut' | 'bar'
+  const [spendFilter, setSpendFilter]   = useState('all'); // 'all' | 'month' | '3months' // 'groups' | 'owed' // 'all','month','3months'
   const [updateStatus, setUpdateStatus]   = useState('');
   const [splitView, setSplitView]   = useState('breakdown'); // 'breakdown' | 'settle'
   const [newName, setNewName]     = useState('');
@@ -489,6 +492,78 @@ export default function App() {
     );
   };
 
+  const PieChart = ({ data, size=100, donut=false }) => {
+    const total = data.reduce((s,d) => s+d.value, 0);
+    if (total === 0) return null;
+    let angle = -Math.PI/2;
+    const r = size/2, inner = donut ? r*0.52 : 0;
+    const slices = data.map(d => {
+      const start = angle;
+      const sweep = (d.value/total) * 2 * Math.PI;
+      angle += sweep;
+      const x1=Math.cos(start)*r, y1=Math.sin(start)*r;
+      const x2=Math.cos(angle)*r, y2=Math.sin(angle)*r;
+      const ix1=Math.cos(start)*inner, iy1=Math.sin(start)*inner;
+      const ix2=Math.cos(angle)*inner, iy2=Math.sin(angle)*inner;
+      const large = sweep > Math.PI ? 1 : 0;
+      const path = donut
+        ? `M${ix1},${iy1} L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} L${ix2},${iy2} A${inner},${inner} 0 ${large},0 ${ix1},${iy1} Z`
+        : `M0,0 L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} Z`;
+      return { ...d, path };
+    });
+    return (
+      <svg width={size} height={size} viewBox={`${-r} ${-r} ${size} ${size}`} style={{ flexShrink:0 }}>
+        {slices.map((s,i) => <path key={i} d={s.path} fill={s.color} stroke={dark?'#0a0a0a':'#fafaf8'} strokeWidth={1.5}/>)}
+        {donut && <text x="0" y="5" textAnchor="middle" fill={T.text} fontSize="11" fontWeight="700" fontFamily="Urbanist,sans-serif">${total.toFixed(0)}</text>}
+      </svg>
+    );
+  };
+
+  const SpendBarChart = ({ data }) => {
+    const max = Math.max(...data.map(d => d.value), 0.01);
+    return (
+      <div style={{ display:'flex', alignItems:'flex-end', gap:6, height:80, marginTop:8 }}>
+        {data.map((d,i) => (
+          <div key={i} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
+            <div style={{ fontSize:9, color:T.text, fontWeight:600 }}>${d.value.toFixed(0)}</div>
+            <div style={{ width:'100%', background:d.color, borderRadius:2, height:`${Math.max((d.value/max)*60,2)}px`, transition:'height 0.4s ease' }}/>
+            <div style={{ fontSize:9, color:T.muted, textAlign:'center', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', width:'100%' }}>{d.name}</div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const LineChart = ({ splits, members }) => {
+    if (splits.length < 2) return <div style={{ fontSize:11, color:T.muted2, padding:'10px 0' }}>Need 2+ splits to show trend</div>;
+    const sorted = [...splits].filter(s=>s.orderDate).sort((a,b)=>a.orderDate.localeCompare(b.orderDate));
+    if (sorted.length < 2) return <div style={{ fontSize:11, color:T.muted2, padding:'10px 0' }}>Add dates to splits to show trend</div>;
+    const W=280, H=70, pad=8;
+    const totals = sorted.map(s => s.grandTotal || 0);
+    const maxV = Math.max(...totals, 0.01);
+    const pts = sorted.map((s,i) => {
+      const x = pad + (i/(sorted.length-1))*(W-pad*2);
+      const y = H - pad - ((s.grandTotal||0)/maxV)*(H-pad*2);
+      return { x, y, label:s.name, val:s.grandTotal||0, date:s.orderDate };
+    });
+    const polyline = pts.map(p=>`${p.x},${p.y}`).join(' ');
+    return (
+      <div style={{ overflowX:'auto' }}>
+        <svg width={W} height={H+20} style={{ display:'block' }}>
+          <polyline points={polyline} fill="none" stroke={T.accent} strokeWidth="2" strokeLinejoin="round"/>
+          {pts.map((p,i) => (
+            <g key={i}>
+              <circle cx={p.x} cy={p.y} r="3" fill={T.accent}/>
+              <text x={p.x} y={H+14} textAnchor="middle" fill={T.muted} fontSize="8" fontFamily="Urbanist,sans-serif">{p.date?.slice(5)}</text>
+            </g>
+          ))}
+          <text x={pad} y={pad+6} fill={T.muted} fontSize="8" fontFamily="Urbanist,sans-serif">${maxV.toFixed(0)}</text>
+          <text x={pad} y={H-pad} fill={T.muted} fontSize="8" fontFamily="Urbanist,sans-serif">$0</text>
+        </svg>
+      </div>
+    );
+  };
+
   // ── HOME PAGE ──
   if (page === 'home') return (
     <div style={{ background:T.bg, minHeight:'100vh', color:T.text, fontFamily:'"Urbanist",sans-serif', transition:'background 0.2s' }}>
@@ -595,6 +670,60 @@ export default function App() {
                             </div>
                           );
                         });
+                      })()}
+                    </div>
+
+                    {/* Chart toggle */}
+                    <div style={{ padding:'10px 16px', borderTop:`1px solid ${T.border}` }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                        <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted }}>Spending</div>
+                        <div style={{ display:'flex', gap:4 }}>
+                          {['donut','bar'].map(t => (
+                            <button key={t} onClick={() => setChartType(t)}
+                              style={{ padding:'2px 8px', background: chartType===t ? T.accent : 'none', color: chartType===t ? T.accentText : T.muted, border:`1px solid ${chartType===t ? T.accent : T.ghostBorder}`, borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:9, fontWeight:700, cursor:'pointer', textTransform:'uppercase' }}>
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ display:'flex', gap:4, marginBottom:10 }}>
+                        {[['all','All'],['month','Month'],['3months','3 Mo']].map(([v,l]) => (
+                          <button key={v} onClick={() => setSpendFilter(v)}
+                            style={{ padding:'2px 8px', background: spendFilter===v ? T.btnBg : 'none', color: spendFilter===v ? T.btnText : T.muted, border:`1px solid ${spendFilter===v ? T.border : T.ghostBorder}`, borderRadius:100, fontFamily:'"Urbanist",sans-serif', fontSize:9, fontWeight:600, cursor:'pointer' }}>
+                            {l}
+                          </button>
+                        ))}
+                      </div>
+                      {(() => {
+                        const now = new Date();
+                        const filteredSplits = groupSplits.filter(s => {
+                          if (spendFilter === 'all') return true;
+                          const d = new Date(s.orderDate || s.savedAt);
+                          if (spendFilter === 'month') return d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear();
+                          if (spendFilter === '3months') return d >= new Date(now.getFullYear(), now.getMonth()-2, 1);
+                          return true;
+                        });
+                        const chartData = group.members.map((m,mi) => {
+                          const value = filteredSplits.reduce((sum, split) => {
+                            const p = split.people.find(x => x.name === m.name);
+                            return sum + (p ? (split.finals[p.id]||0) : 0);
+                          }, 0);
+                          return { name: m.name, value, color: T.COLORS[mi % T.COLORS.length] };
+                        }).filter(d => d.value > 0);
+                        if (!chartData.length) return <div style={{ fontSize:11, color:T.muted2, padding:'4px 0' }}>No data for this period</div>;
+                        const legend = (
+                          <div style={{ display:'flex', flexDirection:'column', gap:5, flex:1 }}>
+                            {chartData.map((d,i) => (
+                              <div key={i} style={{ display:'flex', alignItems:'center', gap:6 }}>
+                                <div style={{ width:8, height:8, borderRadius:'50%', background:d.color, flexShrink:0 }}/>
+                                <span style={{ fontSize:11, color:T.text }}>{d.name}</span>
+                                <span style={{ fontSize:11, color:T.muted, marginLeft:'auto' }}>${d.value.toFixed(2)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                        if (chartType === 'donut') return <div style={{ display:'flex', alignItems:'center', gap:16 }}><PieChart data={chartData} size={100} donut={true} />{legend}</div>;
+                        return <SpendBarChart data={chartData} />;
                       })()}
                     </div>
                   </div>
