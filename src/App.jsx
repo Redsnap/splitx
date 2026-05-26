@@ -1094,7 +1094,7 @@ export default function App() {
       )}
 
       {/* ── PEOPLE ── */}
-      <div style={{ padding:'14px 20px', borderBottom:`1px solid ${T.border}` }}>
+      {!showSaved && !showGroups && <div style={{ padding:'14px 20px', borderBottom:`1px solid ${T.border}` }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
           <SecLabel>People</SecLabel>
           {hasPeople && !showGroups && (
@@ -1134,10 +1134,10 @@ export default function App() {
             </div>
           ))}
         </div>
-      </div>
+      </div>}
 
       {/* ── DATE ── */}
-      <div style={{ padding:'12px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', alignItems:'center', gap:12 }}>
+      {!showSaved && !showGroups && <div style={{ padding:'12px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', alignItems:'center', gap:12 }}>
         <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, flexShrink:0 }}>Date</div>
         <input type="date" value={orderDate} onChange={e=>setOrderDate(e.target.value)}
           style={{ background:'none', border:'none', color: orderDate ? T.text : T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:12, outline:'none', cursor:'pointer', padding:'2px 0', colorScheme: dark ? 'dark' : 'light' }} />
@@ -1149,12 +1149,12 @@ export default function App() {
         {orderDate && (
           <button onClick={()=>setOrderDate('')} style={{ background:'none', border:'none', color:T.muted, cursor:'pointer', fontSize:14, lineHeight:1, padding:0, opacity:0.5, marginLeft:'auto' }}>×</button>
         )}
-      </div>
+      </div>}
 
       {/* ── BILL ── */}
       <div style={{ padding:'0 20px' }}>
 
-        {!hasItems && (
+        {!hasItems && !showSaved && !showGroups && (
           <>
             <div onClick={()=>!scanning&&fileRef.current.click()}
               style={{ border:`1px dashed ${scanning?T.accent:T.border}`, borderRadius:2, padding:'40px 20px', textAlign:'center', cursor:scanning?'default':'pointer', margin:'20px 0', transition:'border-color 0.2s' }}>
@@ -1179,6 +1179,7 @@ export default function App() {
             )}
           </>
         )}
+
 
         {hasItems && (
           <div style={{ marginTop:20 }}>
