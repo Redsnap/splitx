@@ -18,7 +18,7 @@ const THEMES = {
   dark: {
     bg:'#0a0a0a', surface:'#111', surface2:'#161616',
     border:'#1e1e1e', border2:'#141414',
-    text:'#f0f0f0', muted:'#444', muted2:'#222', sub:'#333',
+    text:'#f0f0f0', muted:'#666', muted2:'#333', sub:'#555',
     inputBg:'#111', accent:'#2563eb', accentText:'#fff',
     btnBg:'#f0f0f0', btnText:'#0a0a0a',
     ghostBorder:'#1e1e1e', ghostText:'#555',
@@ -72,11 +72,24 @@ export default function App() {
   const [graphFilter, setGraphFilter]   = useState('all');
   const [homeTab, setHomeTab]           = useState('groups');
   const [chartGroup, setChartGroup]     = useState(null);
-  const [chartType, setChartType]       = useState('donut'); // 'donut' | 'bar'
+  const [chartType, setChartType]       = useState('donut');
+  const [activeGroup, setActiveGroup]   = useState(null);
+  const [paymentInput, setPaymentInput] = useState({});
+  const [expandedGroupSplit, setExpandedGroupSplit] = useState(null);
+  const [settleUpGroup, setSettleUpGroup]   = useState(null);
+  const [panelSettleGroup, setPanelSettleGroup] = useState(null);
+  const [panelSettleFrom, setPanelSettleFrom]   = useState('');
+  const [panelSettleTo, setPanelSettleTo]       = useState('');
+  const [panelSettleAmount, setPanelSettleAmount] = useState(''); // groupId
+  const [settleFrom, setSettleFrom]         = useState('');
+  const [settleTo, setSettleTo]             = useState('');
+  const [settleAmount, setSettleAmount]     = useState(''); // {txKey: amount}
+  const [payments, setPayments]         = useState({}); // {groupId: [{from,to,amount,date}]} // 'donut' | 'bar'
   const [spendFilter, setSpendFilter]   = useState('all'); // 'all' | 'month' | '3months' // 'groups' | 'owed' // 'all','month','3months'
   const [updateStatus, setUpdateStatus]   = useState('');
   const [splitView, setSplitView]   = useState('breakdown'); // 'breakdown' | 'settle'
   const [newName, setNewName]     = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [scanning, setScanning]   = useState(false);
   const [copied, setCopied]       = useState(false);
   const [addingItem, setAddingItem] = useState(false);
@@ -99,6 +112,10 @@ export default function App() {
   const [showGroupInput, setShowGroupInput] = useState(false);
   const [groupName, setGroupName]           = useState('');
   const [groupSaveStatus, setGroupSaveStatus] = useState('');
+  const [newGroupName, setNewGroupName]   = useState('');
+  const [newGroupMembers, setNewGroupMembers] = useState([]);
+  const [newGroupMember, setNewGroupMember] = useState('');
+  const [showNewGroup, setShowNewGroup]   = useState(false);
 
   const storage = {
     set: async (key, value) => { try { localStorage.setItem(key, value); } catch(e) {} },
@@ -132,6 +149,14 @@ export default function App() {
             })
           )).filter(Boolean).sort((a,b) => b.savedAt - a.savedAt);
           setSavedGroups(groups);
+        }
+        const payRes = await storage.list('payments:');
+        if (payRes?.keys?.length > 0) {
+          const allPayments = {};
+          await Promise.all(payRes.keys.map(async k => {
+            try { const r = await storage.get(k); if (r) { const gid = k.replace('payments:',''); allPayments[gid] = JSON.parse(r.value); } } catch {}
+          }));
+          setPayments(allPayments);
         }
       } catch(e) { console.error(e); }
     })();
@@ -184,6 +209,17 @@ export default function App() {
     } catch(e) { console.error(e); }
   };
 
+  const createGroup = async () => {
+    if (!newGroupMembers.length) return;
+    const name = newGroupName.trim() || `Group ${savedGroups.length + 1}`;
+    const id = Date.now();
+    const members = newGroupMembers.map((m, i) => ({ id: id + i, name: m, color: T.COLORS[i % T.COLORS.length] }));
+    const group = { id, name, savedAt: id, members };
+    await storage.set(`group:${id}`, JSON.stringify(group));
+    setSavedGroups(prev => [group, ...prev]);
+    setNewGroupName(''); setNewGroupMembers([]); setNewGroupMember(''); setShowNewGroup(false);
+  };
+
   const loadGroup = (group) => {
     // Reassign fresh IDs so colors work correctly with current theme
     const fresh = group.members.map((m, i) => ({
@@ -193,7 +229,6 @@ export default function App() {
     }));
     setPeople(fresh);
     setItems(prev => prev.map(i => ({ ...i, assignedTo:{} })));
-    setShowGroups(false);
   };
 
   const deleteGroup = async (groupId) => {
@@ -382,6 +417,20 @@ export default function App() {
   };
 
 
+  const recordPayment = async (groupId, from, to, amount) => {
+    if (!amount || parseFloat(amount) <= 0) return;
+    const payment = { from, to, amount: parseFloat(amount), date: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) };
+    const updated = [...(payments[groupId] || []), payment];
+    await storage.set(`payments:${groupId}`, JSON.stringify(updated));
+    setPayments(prev => ({ ...prev, [groupId]: updated }));
+  };
+
+  const deletePayment = async (groupId, idx) => {
+    const updated = (payments[groupId] || []).filter((_,i) => i !== idx);
+    await storage.set(`payments:${groupId}`, JSON.stringify(updated));
+    setPayments(prev => ({ ...prev, [groupId]: updated }));
+  };
+
   const resetSplit = () => {
     setPeople([]);
     setItems([]);
@@ -438,6 +487,12 @@ export default function App() {
         if (netBalances[p.name] !== undefined) netBalances[p.name] -= owes;
         if (netBalances[payer.name] !== undefined) netBalances[payer.name] += owes;
       });
+    });
+    // Apply recorded payments
+    const groupPayments = payments[group.id] || [];
+    groupPayments.forEach(p => {
+      if (netBalances[p.from] !== undefined) netBalances[p.from] += p.amount;
+      if (netBalances[p.to] !== undefined) netBalances[p.to] -= p.amount;
     });
     const entries = group.members.map((m,i) => ({ name:m.name, color:T.COLORS[i%T.COLORS.length], amount:netBalances[m.name]||0 }));
     const debtors = entries.filter(e => e.amount < -0.01).map(e => ({...e}));
@@ -591,20 +646,294 @@ export default function App() {
     );
   };
 
+  // ── GROUP DETAIL PAGE ──
+  if (activeGroup) {
+    const group = activeGroup;
+    const { groupSplits, totalSpent, transactions } = getGroupStats(group);
+    const groupPayments = payments[group.id] || [];
+
+    // Apply payments to transactions
+    const adjustedTx = transactions.map(t => {
+      const paid = groupPayments.filter(p => p.from === t.from.name && p.to === t.to.name).reduce((s,p) => s+p.amount, 0);
+      return { ...t, paid, remaining: Math.max(0, t.amount - paid) };
+    });
+
+    return (
+      <div style={{ background:T.bg, minHeight:'100vh', color:T.text, fontFamily:'"Urbanist",sans-serif' }}>
+        {/* Header */}
+        <div style={{ padding:'16px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div>
+            <div style={{ fontSize:18, fontWeight:800 }}>{group.name}</div>
+            <div style={{ fontSize:10, color:T.muted, marginTop:1 }}>{group.members.map(m=>m.name).join(', ')}</div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={() => setActiveGroup(null)} style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted, display:'flex', alignItems:'center' }}>
+              <i className="ti ti-home" style={{ fontSize:14 }} aria-hidden="true"/>
+            </button>
+            <button onClick={()=>setDark(d=>!d)} style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted }}>
+              {dark ? '☀' : '☾'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ padding:'20px 20px 80px' }}>
+          {/* Stats */}
+          <div style={{ display:'flex', gap:8, marginBottom:20 }}>
+            <div style={{ flex:1, background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'12px 14px' }}>
+              <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, marginBottom:4 }}>Total Spent</div>
+              <div style={{ fontSize:22, fontWeight:800 }}>${totalSpent.toFixed(2)}</div>
+            </div>
+            <div style={{ flex:1, background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'12px 14px' }}>
+              <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, marginBottom:4 }}>Splits</div>
+              <div style={{ fontSize:22, fontWeight:800 }}>{groupSplits.length}</div>
+            </div>
+          </div>
+
+          {/* Spending Charts */}
+          <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'14px', marginBottom:20 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+              <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted }}>Spending</div>
+              <div style={{ display:'flex', gap:4 }}>
+                {['donut','bar'].map(t => (
+                  <button key={t} onClick={() => setChartType(t)}
+                    style={{ padding:'2px 8px', background: chartType===t ? T.accent : 'none', color: chartType===t ? T.accentText : T.muted, border:`1px solid ${chartType===t ? T.accent : T.ghostBorder}`, borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:9, fontWeight:700, cursor:'pointer', textTransform:'uppercase' }}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display:'flex', gap:4, marginBottom:10 }}>
+              {[['all','All'],['month','Month'],['3months','3 Mo']].map(([v,l]) => (
+                <button key={v} onClick={() => setSpendFilter(v)}
+                  style={{ padding:'2px 8px', background: spendFilter===v ? T.btnBg : 'none', color: spendFilter===v ? T.btnText : T.muted, border:`1px solid ${spendFilter===v ? T.border : T.ghostBorder}`, borderRadius:100, fontFamily:'"Urbanist",sans-serif', fontSize:9, fontWeight:600, cursor:'pointer' }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            {(() => {
+              const now = new Date();
+              const filteredSplits = groupSplits.filter(s => {
+                if (spendFilter === 'all') return true;
+                const d = new Date(s.orderDate || s.savedAt);
+                if (spendFilter === 'month') return d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear();
+                if (spendFilter === '3months') return d >= new Date(now.getFullYear(), now.getMonth()-2, 1);
+                return true;
+              });
+              const chartData = group.members.map((m,mi) => ({
+                name: m.name,
+                value: filteredSplits.reduce((sum, split) => {
+                  const p = split.people.find(x => x.name === m.name);
+                  return sum + (p ? (split.finals[p.id]||0) : 0);
+                }, 0),
+                color: T.COLORS[mi % T.COLORS.length]
+              })).filter(d => d.value > 0);
+              if (!chartData.length) return <div style={{ fontSize:11, color:T.muted2 }}>No data for this period</div>;
+              const legend = (
+                <div style={{ display:'flex', flexDirection:'column', gap:5, flex:1 }}>
+                  {chartData.map((d,i) => (
+                    <div key={i} style={{ display:'flex', alignItems:'center', gap:6 }}>
+                      <div style={{ width:8, height:8, borderRadius:'50%', background:d.color, flexShrink:0 }}/>
+                      <span style={{ fontSize:11, color:T.text }}>{d.name}</span>
+                      <span style={{ fontSize:11, color:T.muted, marginLeft:'auto' }}>${d.value.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+              if (chartType === 'donut') return <div style={{ display:'flex', alignItems:'center', gap:16 }}><PieChart data={chartData} size={100} donut={true}/>{legend}</div>;
+              return <SpendBarChart data={chartData}/>;
+            })()}
+          </div>
+
+          {/* Settle Up */}
+          <div style={{ background:T.surface, border:`1px solid ${T.muted}44`, borderRadius:2, marginBottom:20, overflow:'hidden' }}>
+            <div onClick={() => setSettleUpGroup(settleUpGroup===group.id ? null : group.id)}
+              style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 14px', cursor:'pointer' }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.text }}>Record a Payment</div>
+              <i className={`ti ti-chevron-${settleUpGroup===group.id?'up':'down'}`} style={{ fontSize:14, color:T.muted }}/>
+            </div>
+            {settleUpGroup === group.id && (
+              <div style={{ borderTop:`1px solid ${T.border}`, padding:'12px 14px' }}>
+                <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                  <select value={settleFrom} onChange={e=>setSettleFrom(e.target.value)}
+                    style={{ flex:1, minWidth:90, background:'transparent', border:`1px solid ${settleFrom?'#2563eb':'#1e1e1e'}`, color:settleFrom?'#2563eb':T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:12, padding:'8px 10px', borderRadius:6, outline:'none', cursor:'pointer', transition:'border-color 0.15s' }}>
+                    <option value="">Who paid?</option>
+                    {group.members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                  </select>
+                  <div style={{ fontSize:11, color:T.muted, flexShrink:0 }}>paid</div>
+                  <select value={settleTo} onChange={e=>setSettleTo(e.target.value)}
+                    style={{ flex:1, minWidth:90, background:'transparent', border:`1px solid ${settleTo?'#35f1a0':'#1e1e1e'}`, color:settleTo?'#35f1a0':T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:12, padding:'8px 10px', borderRadius:6, outline:'none', cursor:'pointer', transition:'border-color 0.15s' }}>
+                    <option value="">Who received?</option>
+                    {group.members.filter(m=>m.name!==settleFrom).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                  </select>
+                  <div style={{ display:'flex', alignItems:'center', gap:4, background:'transparent', border:`1px solid #2a2a2a`, borderRadius:6, padding:'0 10px', flex:1, minWidth:80 }}>
+                    <span style={{ fontSize:11, color:T.muted }}>$</span>
+                    <input type="number" min="0" step="0.01" placeholder="Amount"
+                      value={settleAmount} onChange={e=>setSettleAmount(e.target.value)}
+                      onKeyDown={async e => {
+                        if (e.key==='Enter' && settleFrom && settleTo && settleAmount) {
+                          await recordPayment(group.id, settleFrom, settleTo, parseFloat(settleAmount));
+                          setSettleFrom(''); setSettleTo(''); setSettleAmount(''); setSettleUpGroup(null);
+                        }
+                      }}
+                      style={{ flex:1, background:'transparent', border:'none', color:T.text, fontFamily:'"Urbanist",sans-serif', fontSize:12, padding:'8px 0', outline:'none' }}/>
+                  </div>
+                  <button onClick={async () => {
+                    if (!settleFrom || !settleTo || !settleAmount) return;
+                    await recordPayment(group.id, settleFrom, settleTo, parseFloat(settleAmount));
+                    setSettleFrom(''); setSettleTo(''); setSettleAmount(''); setSettleUpGroup(null);
+                  }} style={{ background:'transparent', border:`1px solid #2563eb`, borderRadius:6, color:'#2563eb', fontFamily:'"Urbanist",sans-serif', fontSize:12, fontWeight:600, padding:'8px 18px', cursor:'pointer', flexShrink:0 }}>
+                    OK
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Settlement */}
+          <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:12 }}>Settlement</div>
+
+          {adjustedTx.length === 0 && (
+            <div style={{ padding:'12px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, fontSize:12, color:T.muted, textAlign:'center', marginBottom:20 }}>
+              {transactions.length === 0 ? 'All settled up!' : 'All payments recorded!'}
+            </div>
+          )}
+
+          {adjustedTx.map((t, idx) => {
+            const txKey = `${t.from.name}-${t.to.name}`;
+            const settled = t.remaining < 0.01;
+            return (
+              <div key={idx} style={{ background:T.surface, border:`1px solid ${settled ? T.border : T.border}`, borderRadius:2, marginBottom:10, overflow:'hidden', opacity: settled ? 0.6 : 1 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 14px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:t.from.color }}>{t.from.name}</span>
+                    <span style={{ fontSize:10, color:T.muted }}>owes</span>
+                    <span style={{ fontSize:13, fontWeight:700, color:t.to.color }}>{t.to.name}</span>
+                  </div>
+                  <div style={{ textAlign:'right' }}>
+                    {t.paid > 0 && <div style={{ fontSize:10, color:T.accent }}>paid ${t.paid.toFixed(2)}</div>}
+                    <div style={{ fontSize:20, fontWeight:800, color: settled ? T.muted : T.text, textDecoration: settled ? 'line-through' : 'none' }}>${t.remaining.toFixed(2)}</div>
+                  </div>
+                </div>
+
+
+                {settled && (
+                  <div style={{ borderTop:`1px solid ${T.border2}`, padding:'8px 14px', display:'flex', alignItems:'center', gap:6 }}>
+                    <i className="ti ti-check" style={{ fontSize:13, color:T.accent }}/>
+                    <span style={{ fontSize:11, color:T.accent }}>Settled</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Payment history */}
+          {groupPayments.length > 0 && (
+            <div style={{ marginTop:24 }}>
+              <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:12 }}>Payment History</div>
+              {groupPayments.map((p, idx) => (
+                <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'9px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:6 }}>
+                  <div>
+                    <div style={{ fontSize:12, color:T.text }}><span style={{ fontWeight:700 }}>{p.from}</span> paid <span style={{ fontWeight:700 }}>{p.to}</span></div>
+                    <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>{p.date}</div>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    <span style={{ fontSize:16, fontWeight:800, color:T.accent }}>${p.amount.toFixed(2)}</span>
+                    <button onClick={() => deletePayment(group.id, idx)} style={{ background:'none', border:'none', color:T.muted, cursor:'pointer', fontSize:16, opacity:0.4 }}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Split history */}
+          <div style={{ marginTop:24 }}>
+            <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:12 }}>Split History</div>
+            {groupSplits.length === 0 && <div style={{ fontSize:12, color:T.muted }}>No splits yet</div>}
+            {groupSplits.map(s => {
+              const isExpanded = expandedGroupSplit === s.id;
+              // Compute settlement for this split
+              const splitBalances = {};
+              s.people.forEach(p => { splitBalances[p.id] = -(s.finals[p.id] || 0); });
+              if (s.paidBy) splitBalances[s.paidBy] = (splitBalances[s.paidBy] || 0) + s.grandTotal;
+              const splitDebtors = s.people.filter(p => splitBalances[p.id] < -0.01).map(p => ({ ...p, amount: splitBalances[p.id] }));
+              const splitCreditors = s.people.filter(p => splitBalances[p.id] > 0.01).map(p => ({ ...p, amount: splitBalances[p.id] }));
+              const splitTx = [];
+              let si = 0, sj = 0;
+              const sd = splitDebtors.map(x=>({...x})), sc = splitCreditors.map(x=>({...x}));
+              while (si < sd.length && sj < sc.length) {
+                const amt = Math.min(-sd[si].amount, sc[sj].amount);
+                if (amt > 0.01) splitTx.push({ from: sd[si], to: sc[sj], amount: amt });
+                sd[si].amount += amt; sc[sj].amount -= amt;
+                if (Math.abs(sd[si].amount) < 0.01) si++;
+                if (Math.abs(sc[sj].amount) < 0.01) sj++;
+              }
+              return (
+                <div key={s.id} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:6, overflow:'hidden' }}>
+                  <div onClick={() => setExpandedGroupSplit(isExpanded ? null : s.id)}
+                    style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', cursor:'pointer' }}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{s.name}</div>
+                      <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>{s.date} · ${s.grandTotal.toFixed(2)}</div>
+                    </div>
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <button onClick={e => { e.stopPropagation(); setActiveGroup(null); setPage('split'); setTimeout(()=>setShowSaved(true),50); }}
+                        style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'5px 12px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer' }}>
+                        View
+                      </button>
+                      <i className={`ti ti-chevron-${isExpanded?'up':'down'}`} style={{ fontSize:14, color:T.muted }}/>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div style={{ borderTop:`1px solid ${T.border2}`, padding:'10px 14px' }}>
+                      {/* Per person amounts */}
+                      <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, marginBottom:8 }}>Breakdown</div>
+                      {s.people.map((p, pi) => (
+                        <div key={p.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'4px 0', borderBottom:`1px solid ${T.border2}` }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                            <span style={{ width:7, height:7, borderRadius:'50%', background:T.COLORS[pi%T.COLORS.length], flexShrink:0, display:'inline-block' }}/>
+                            <span style={{ fontSize:12, color:T.text }}>{p.name}</span>
+                            {s.paidBy === p.id && <span style={{ fontSize:9, color:T.accent, fontWeight:700 }}>paid</span>}
+                          </div>
+                          <span style={{ fontSize:13, fontWeight:700, color:T.text }}>${(s.finals[p.id]||0).toFixed(2)}</span>
+                        </div>
+                      ))}
+                      {/* Settlement for this split */}
+                      {splitTx.length > 0 && (
+                        <>
+                          <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, margin:'10px 0 8px' }}>Who pays who</div>
+                          {splitTx.map((t, idx) => (
+                            <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'4px 0' }}>
+                              <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12 }}>
+                                <span style={{ fontWeight:700, color:T.COLORS[s.people.findIndex(p=>p.id===t.from.id)%T.COLORS.length] }}>{t.from.name}</span>
+                                <span style={{ fontSize:10, color:T.muted }}>pays</span>
+                                <span style={{ fontWeight:700, color:T.COLORS[s.people.findIndex(p=>p.id===t.to.id)%T.COLORS.length] }}>{t.to.name}</span>
+                              </div>
+                              <span style={{ fontSize:14, fontWeight:800, color:T.text }}>${t.amount.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── HOME PAGE ──
   if (page === 'home') return (
     <div style={{ background:T.bg, minHeight:'100vh', color:T.text, fontFamily:'"Urbanist",sans-serif', transition:'background 0.2s' }}>
       {/* Header */}
       <div style={{ padding:'18px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <button onClick={() => setPage('home')} style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'6px 10px', cursor:'pointer', color:T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:11, display:'flex', alignItems:'center', gap:4 }}>
-            <i className="ti ti-arrow-left" style={{ fontSize:13 }} aria-hidden="true"/> Home
-          </button>
-          <div>
-            <div style={{ fontSize:20, fontWeight:800, letterSpacing:'0.06em' }}>SPLIT.IT</div>
-            <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
-          </div>
+        <div>
+          <div style={{ fontSize:20, fontWeight:800, letterSpacing:'0.06em' }}>SPLIT.IT</div>
+          <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
         </div>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
         <button onClick={()=>setDark(d=>!d)}
           style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted, display:'flex', alignItems:'center' }}>
           {dark
@@ -612,12 +941,13 @@ export default function App() {
             : <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M11.5 8.5A5 5 0 0 1 5.5 2.5a5 5 0 1 0 6 6z"/></svg>
           }
         </button>
+        </div>
       </div>
 
       <div style={{ padding:'20px 20px 80px' }}>
 
         {/* New Split button */}
-        <button onClick={() => { resetSplit(); setPage('split'); }}
+        <button onClick={() => { resetSplit(); setActiveGroup(null); setPage('split'); }}
           style={{ width:'100%', padding:'14px', background:T.accent, color:T.accentText, border:'none', borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:13, fontWeight:700, letterSpacing:'0.1em', cursor:'pointer', marginBottom:24, display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
           <i className="ti ti-plus" style={{ fontSize:16 }} aria-hidden="true"/> NEW SPLIT
         </button>
@@ -642,7 +972,7 @@ export default function App() {
               {savedGroups.map((group, gi) => {
                 const { groupSplits, totalSpent, transactions } = getGroupStats(group);
                 return (
-                  <div key={group.id} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, overflow:'hidden' }}>
+                  <div key={group.id} onClick={() => setActiveGroup(group)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, overflow:'hidden', cursor:'pointer' }}>
                     {/* Group header */}
                     <div style={{ padding:'12px 16px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                       <div>
@@ -655,10 +985,7 @@ export default function App() {
                           ))}
                         </div>
                       </div>
-                      <button onClick={() => { loadGroup(group); setPage('split'); }}
-                        style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'7px 16px', fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, cursor:'pointer', flexShrink:0, marginLeft:12 }}>
-                        + Split
-                      </button>
+
                     </div>
 
                     {/* Settlement lines */}
@@ -700,83 +1027,13 @@ export default function App() {
                       })()}
                     </div>
 
-                    {/* Chart toggle */}
-                    <div style={{ padding:'10px 16px', borderTop:`1px solid ${T.border}` }}>
-                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-                        <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted }}>Spending</div>
-                        <div style={{ display:'flex', gap:4 }}>
-                          {['donut','bar'].map(t => (
-                            <button key={t} onClick={() => setChartType(t)}
-                              style={{ padding:'2px 8px', background: chartType===t ? T.accent : 'none', color: chartType===t ? T.accentText : T.muted, border:`1px solid ${chartType===t ? T.accent : T.ghostBorder}`, borderRadius:2, fontFamily:'"Urbanist",sans-serif', fontSize:9, fontWeight:700, cursor:'pointer', textTransform:'uppercase' }}>
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div style={{ display:'flex', gap:4, marginBottom:10 }}>
-                        {[['all','All'],['month','Month'],['3months','3 Mo']].map(([v,l]) => (
-                          <button key={v} onClick={() => setSpendFilter(v)}
-                            style={{ padding:'2px 8px', background: spendFilter===v ? T.btnBg : 'none', color: spendFilter===v ? T.btnText : T.muted, border:`1px solid ${spendFilter===v ? T.border : T.ghostBorder}`, borderRadius:100, fontFamily:'"Urbanist",sans-serif', fontSize:9, fontWeight:600, cursor:'pointer' }}>
-                            {l}
-                          </button>
-                        ))}
-                      </div>
-                      {(() => {
-                        const now = new Date();
-                        const filteredSplits = groupSplits.filter(s => {
-                          if (spendFilter === 'all') return true;
-                          const d = new Date(s.orderDate || s.savedAt);
-                          if (spendFilter === 'month') return d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear();
-                          if (spendFilter === '3months') return d >= new Date(now.getFullYear(), now.getMonth()-2, 1);
-                          return true;
-                        });
-                        const chartData = group.members.map((m,mi) => {
-                          const value = filteredSplits.reduce((sum, split) => {
-                            const p = split.people.find(x => x.name === m.name);
-                            return sum + (p ? (split.finals[p.id]||0) : 0);
-                          }, 0);
-                          return { name: m.name, value, color: T.COLORS[mi % T.COLORS.length] };
-                        }).filter(d => d.value > 0);
-                        if (!chartData.length) return <div style={{ fontSize:11, color:T.muted2, padding:'4px 0' }}>No data for this period</div>;
-                        const legend = (
-                          <div style={{ display:'flex', flexDirection:'column', gap:5, flex:1 }}>
-                            {chartData.map((d,i) => (
-                              <div key={i} style={{ display:'flex', alignItems:'center', gap:6 }}>
-                                <div style={{ width:8, height:8, borderRadius:'50%', background:d.color, flexShrink:0 }}/>
-                                <span style={{ fontSize:11, color:T.text }}>{d.name}</span>
-                                <span style={{ fontSize:11, color:T.muted, marginLeft:'auto' }}>${d.value.toFixed(2)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        );
-                        if (chartType === 'donut') return <div style={{ display:'flex', alignItems:'center', gap:16 }}><PieChart data={chartData} size={100} donut={true} />{legend}</div>;
-                        return <SpendBarChart data={chartData} />;
-                      })()}
-                    </div>
+
                   </div>
                 );
               })}
             </div>
 
-            {/* Recent splits */}
-            {savedSplits.length > 0 && (
-              <div style={{ marginTop:24 }}>
-                <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted, marginBottom:14 }}>Recent Splits</div>
-                {savedSplits.slice(0,5).map(s => (
-                  <div key={s.id} className="saved-row"
-                    style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, marginBottom:6, transition:'background 0.15s' }}>
-                    <div>
-                      <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{s.name}</div>
-                      <div style={{ fontSize:10, color:T.muted, marginTop:2 }}>{s.date} · {s.people.map(p=>p.name).join(', ')} · ${s.grandTotal.toFixed(2)}</div>
-                    </div>
-                    <button onClick={() => { loadSplit(s); setPage('split'); }}
-                      style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'5px 12px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer', flexShrink:0, marginLeft:12 }}>
-                      Load
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+
           </div>
         )}
 
@@ -786,7 +1043,7 @@ export default function App() {
       <div style={{ position:'fixed', bottom:0, left:0, right:0, background:T.surface, borderTop:`1px solid ${T.border}`, display:'flex', zIndex:100 }}>
         {[
           { icon:'home', label:'Home', active: true, action:() => {} },
-          { icon:'plus', label:'New Split', action:() => { resetSplit(); setPage('split'); } },
+          { icon:'plus', label:'New', action:() => { resetSplit(); setPage('split'); } },
           { icon:'bookmark', label:`Saved${savedSplits.length>0?' ('+savedSplits.length+')':''}`, action:() => { setPage('split'); setTimeout(()=>setShowSaved(true),50); } },
           { icon:'users', label:`Groups${savedGroups.length>0?' ('+savedGroups.length+')':''}`, action:() => { setPage('split'); setTimeout(()=>setShowGroups(true),50); } },
         ].map((item, i) => (
@@ -808,16 +1065,14 @@ export default function App() {
 
       {/* ── HEADER ── */}
       <div style={{ padding:'16px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <button onClick={() => setPage('home')} style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'6px 10px', cursor:'pointer', color:T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:11, display:'flex', alignItems:'center', gap:4 }}>
-            <i className="ti ti-arrow-left" style={{ fontSize:13 }} aria-hidden="true"/> Home
-          </button>
-          <div>
-            <div style={{ fontSize:20, fontWeight:800, letterSpacing:'0.06em' }}>SPLIT.IT</div>
-            <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
-          </div>
+        <div>
+          <div style={{ fontSize:20, fontWeight:800, letterSpacing:'0.06em' }}>SPLIT.IT</div>
+          <div style={{ fontSize:10, color:T.muted, marginTop:2, letterSpacing:'0.2em' }}>GROUP ORDER CALCULATOR</div>
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <button onClick={() => setPage('home')} style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted, display:'flex', alignItems:'center' }}>
+            <i className="ti ti-home" style={{ fontSize:14 }} aria-hidden="true"/>
+          </button>
           <button onClick={()=>setDark(d=>!d)}
             style={{ background:'none', border:`1px solid ${T.border}`, borderRadius:2, padding:'7px 10px', cursor:'pointer', color:T.muted, display:'flex', alignItems:'center' }}>
             {dark
@@ -841,15 +1096,21 @@ export default function App() {
         <div style={{ borderBottom:`1px solid ${T.border}`, padding:'16px 20px', background:T.surface2 }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
             <SecLabel>Saved Groups</SecLabel>
-            {hasPeople && (
-              <button onClick={()=>setShowGroupInput(s=>!s)}
-                style={{ ...ghBtn({ padding:'5px 12px', fontSize:10 }), background:showGroupInput?T.accent:'none', color:showGroupInput?T.accentText:T.ghostText, border:`1px solid ${showGroupInput?T.accent:T.ghostBorder}` }}>
-                + Save current people as group
+            <div style={{ display:'flex', gap:6 }}>
+              {hasPeople && (
+                <button onClick={()=>{ setShowGroupInput(s=>!s); setShowNewGroup(false); }}
+                  style={{ ...ghBtn({ padding:'5px 12px', fontSize:10 }), background:showGroupInput?T.accent:'none', color:showGroupInput?T.accentText:T.ghostText, border:`1px solid ${showGroupInput?T.accent:T.ghostBorder}` }}>
+                  Save current
+                </button>
+              )}
+              <button onClick={()=>{ setShowNewGroup(s=>!s); setShowGroupInput(false); }}
+                style={{ ...ghBtn({ padding:'5px 12px', fontSize:10 }), background:showNewGroup?T.accent:'none', color:showNewGroup?T.accentText:T.ghostText, border:`1px solid ${showNewGroup?T.accent:T.ghostBorder}` }}>
+                + New Group
               </button>
-            )}
+            </div>
           </div>
 
-          {/* Save group input */}
+          {/* Save current people as group */}
           {showGroupInput && (
             <div style={{ display:'flex', gap:8, marginBottom:14 }}>
               <input style={{ ...solidInput({ flex:1 }) }} placeholder="Group name... (e.g. Weee! Crew)"
@@ -863,38 +1124,188 @@ export default function App() {
             </div>
           )}
 
+          {/* Create new group */}
+          {showNewGroup && (
+            <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'14px', marginBottom:14 }}>
+              <input style={{ ...solidInput({ width:'100%', marginBottom:10 }) }} placeholder="Group name... (e.g. Weee! Crew)"
+                value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} />
+              <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:10 }}>
+                {newGroupMembers.map((m, i) => (
+                  <div key={i} style={{ display:'flex', alignItems:'center', gap:4, padding:'3px 8px', borderRadius:100, border:`1px solid ${T.COLORS[i%T.COLORS.length]}44`, background:`${T.COLORS[i%T.COLORS.length]}11`, color:T.COLORS[i%T.COLORS.length], fontSize:11 }}>
+                    {m}
+                    <button onClick={() => setNewGroupMembers(p => p.filter((_,j) => j!==i))} style={{ background:'none', border:'none', color:'inherit', cursor:'pointer', fontSize:14, padding:0, opacity:0.6 }}>×</button>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+                <input style={{ ...solidInput({ flex:1 }) }} placeholder="Add person..."
+                  value={newGroupMember} onChange={e=>setNewGroupMember(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==='Enter' && newGroupMember.trim()){ setNewGroupMembers(p=>[...p, newGroupMember.trim()]); setNewGroupMember(''); } }} />
+                <button onClick={()=>{ if(newGroupMember.trim()){ setNewGroupMembers(p=>[...p, newGroupMember.trim()]); setNewGroupMember(''); } }}
+                  style={{ background:T.btnBg, color:T.btnText, border:'none', borderRadius:2, padding:'7px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:13, fontWeight:700, cursor:'pointer' }}>+</button>
+              </div>
+              <div style={{ display:'flex', gap:8 }}>
+                <button onClick={createGroup}
+                  style={{ flex:1, background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'9px', fontFamily:'"Urbanist",sans-serif', fontSize:11, fontWeight:700, cursor:'pointer' }}>
+                  Create Group
+                </button>
+                <button onClick={()=>{ setShowNewGroup(false); setNewGroupName(''); setNewGroupMembers([]); }} style={ghBtn({ padding:'9px 14px' })}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* Standalone Record Payment */}
+          {savedGroups.length > 0 && (
+            <div style={{ marginBottom:16, background:T.surface, border:`0.5px solid ${T.border}`, borderRadius:8, overflow:'hidden' }}>
+              <div onClick={() => setPanelSettleGroup(panelSettleGroup ? null : 'open')}
+                style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px', cursor:'pointer' }}>
+                <div style={{ fontSize:11, fontWeight:500, color:T.muted, letterSpacing:'0.12em', textTransform:'uppercase' }}>Record a Payment</div>
+                <i className={`ti ti-chevron-${panelSettleGroup?'up':'down'}`} style={{ fontSize:14, color:T.muted }}/>
+              </div>
+              {panelSettleGroup && (
+                <div style={{ borderTop:`0.5px solid ${T.border}`, padding:'14px 16px' }}>
+                  {/* Group selector */}
+                  <select value={panelSettleGroup==='open'?'':panelSettleGroup}
+                    onChange={e => { setPanelSettleGroup(e.target.value||'open'); setPanelSettleFrom(''); setPanelSettleTo(''); }}
+                    style={{ width:'100%', background:T.inputBg, border:`0.5px solid ${T.border}`, color:T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:13, padding:'8px 10px', borderRadius:8, outline:'none', cursor:'pointer', marginBottom:14, colorScheme: dark?'dark':'light' }}>
+                    <option value="">Select group...</option>
+                    {savedGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+
+                  {/* Payment row */}
+                  {panelSettleGroup && panelSettleGroup !== 'open' && (() => {
+                    const g = savedGroups.find(x => x.id === parseInt(panelSettleGroup));
+                    if (!g) return null;
+                    const gPayments = (payments[g.id] || []);
+                    return (
+                      <div>
+                        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', marginBottom:14 }}>
+                          <select value={panelSettleFrom} onChange={e=>{ setPanelSettleFrom(e.target.value); setPanelSettleTo(''); }}
+                            style={{ flex:1, minWidth:90, background: panelSettleFrom ? 'rgba(37,99,235,0.08)' : T.inputBg, border:`1.5px solid ${panelSettleFrom?'#2563eb':T.border}`, color:panelSettleFrom?'#2563eb':T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:13, padding:'8px 10px', borderRadius:8, outline:'none', cursor:'pointer', colorScheme: dark?'dark':'light', transition:'all 0.15s' }}>
+                            <option value="">Who paid?</option>
+                            {g.members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                          </select>
+                          <span style={{ fontSize:12, color:T.muted, flexShrink:0 }}>paid</span>
+                          <select value={panelSettleTo} onChange={e=>setPanelSettleTo(e.target.value)}
+                            style={{ flex:1, minWidth:90, background: panelSettleTo ? 'rgba(53,241,160,0.08)' : T.inputBg, border:`1.5px solid ${panelSettleTo?'#35f1a0':T.border}`, color:panelSettleTo?'#35f1a0':T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:13, padding:'8px 10px', borderRadius:8, outline:'none', cursor:'pointer', colorScheme: dark?'dark':'light', transition:'all 0.15s' }}>
+                            <option value="">Who received?</option>
+                            {g.members.filter(m=>m.name!==panelSettleFrom).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                          </select>
+                          <div style={{ display:'flex', alignItems:'center', gap:4, background:T.inputBg, border:`0.5px solid ${T.border}`, borderRadius:8, padding:'0 10px', flex:1, minWidth:80 }}>
+                            <span style={{ fontSize:13, color:T.muted }}>$</span>
+                            <input type="number" min="0" step="0.01" placeholder="0.00"
+                              value={panelSettleAmount} onChange={e=>setPanelSettleAmount(e.target.value)}
+                              onKeyDown={async e => {
+                                if (e.key==='Enter' && panelSettleFrom && panelSettleTo && panelSettleAmount) {
+                                  await recordPayment(parseInt(panelSettleGroup), panelSettleFrom, panelSettleTo, parseFloat(panelSettleAmount));
+                                  setPanelSettleFrom(''); setPanelSettleTo(''); setPanelSettleAmount('');
+                                }
+                              }}
+                              style={{ flex:1, background:'transparent', border:'none', color:T.text, fontFamily:'"Urbanist",sans-serif', fontSize:13, padding:'8px 0', outline:'none' }}/>
+                          </div>
+                          <button onClick={async () => {
+                            if (!panelSettleFrom || !panelSettleTo || !panelSettleAmount) return;
+                            await recordPayment(parseInt(panelSettleGroup), panelSettleFrom, panelSettleTo, parseFloat(panelSettleAmount));
+                            setPanelSettleFrom(''); setPanelSettleTo(''); setPanelSettleAmount('');
+                          }} style={{ background:'transparent', border:`1.5px solid #2563eb`, borderRadius:8, color:'#2563eb', fontFamily:'"Urbanist",sans-serif', fontSize:13, fontWeight:500, padding:'8px 18px', cursor:'pointer', flexShrink:0 }}>
+                            OK
+                          </button>
+                        </div>
+                        {/* Payment history */}
+                        {gPayments.length > 0 && (
+                          <div>
+                            <div style={{ fontSize:11, fontWeight:500, letterSpacing:'0.1em', textTransform:'uppercase', color:T.muted, marginBottom:8 }}>Payment History</div>
+                            {gPayments.map((p,idx) => (
+                              <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 0', borderBottom: idx < gPayments.length-1 ? `0.5px solid ${T.border}` : 'none' }}>
+                                <div>
+                                  <div style={{ fontSize:13, color:T.text }}><span style={{ fontWeight:500 }}>{p.from}</span> paid <span style={{ fontWeight:500 }}>{p.to}</span></div>
+                                  <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>{p.date}</div>
+                                </div>
+                                <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                                  <span style={{ fontSize:14, fontWeight:500, color:'#2563eb' }}>${p.amount.toFixed(2)}</span>
+                                  <button onClick={() => deletePayment(g.id, idx)} style={{ background:'none', border:'none', color:T.muted, cursor:'pointer', fontSize:16, opacity:0.5, padding:0 }}>×</button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
           {savedGroups.length === 0 ? (
             <div style={{ fontSize:12, color:T.muted, padding:'8px 0' }}>
               No saved groups yet. Add people above and save them as a group.
             </div>
           ) : (
             <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-              {savedGroups.map(group => (
-                <div key={group.id} className="saved-row"
-                  style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, padding:'12px 14px', display:'flex', justifyContent:'space-between', alignItems:'center', transition:'background 0.15s' }}>
-                  <div>
-                    <div style={{ fontSize:13, fontWeight:600, color:T.text, marginBottom:6 }}>{group.name}</div>
-                    <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
-                      {group.members.map((m,i) => (
-                        <span key={m.id} style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'3px 8px', borderRadius:100, border:`1px solid ${T.COLORS[i%T.COLORS.length]}44`, background:`${T.COLORS[i%T.COLORS.length]}11`, color:T.COLORS[i%T.COLORS.length], fontSize:10, fontWeight:500 }}>
-                          <span style={{ width:5, height:5, borderRadius:'50%', background:T.COLORS[i%T.COLORS.length], flexShrink:0 }}/>
-                          {m.name}
-                        </span>
+              {savedGroups.map(group => {
+                const { groupSplits, totalSpent, transactions } = getGroupStats(group);
+                return (
+                  <div key={group.id} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:2, overflow:'hidden' }}>
+                    {/* Header */}
+                    <div style={{ padding:'12px 14px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:600, color:T.text, marginBottom:5 }}>{group.name}</div>
+                        <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
+                          {group.members.map((m,i) => (
+                            <span key={m.id} style={{ padding:'2px 8px', borderRadius:100, border:`1px solid ${T.COLORS[i%T.COLORS.length]}44`, background:`${T.COLORS[i%T.COLORS.length]}11`, color:T.COLORS[i%T.COLORS.length], fontSize:10 }}>
+                              {m.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ display:'flex', gap:6, alignItems:'center', marginLeft:12, flexShrink:0 }}>
+                        <button onClick={()=>loadGroup(group)}
+                          style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'6px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer' }}>
+                          Load
+                        </button>
+                        <button onClick={()=>deleteGroup(group.id)}
+                          style={{ background:'none', border:`1px solid ${T.removeBorder}`, color:T.removeText, borderRadius:2, padding:'6px 10px', cursor:'pointer', opacity:0.7 }}>
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    {/* Settlement lines */}
+                    <div style={{ padding:'8px 14px' }}>
+                      {groupSplits.length === 0 && <div style={{ fontSize:11, color:T.muted2 }}>No splits yet</div>}
+                      {groupSplits.length > 0 && transactions.length === 0 && (
+                        <div style={{ fontSize:11, color:T.muted, display:'flex', alignItems:'center', gap:6 }}>
+                          <i className="ti ti-check" style={{ fontSize:12, color:T.accent }}/> All settled up · ${totalSpent.toFixed(2)} total
+                        </div>
+                      )}
+                      {transactions.map((t,idx) => (
+                        <div key={idx} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'4px 0', borderBottom: idx < transactions.length-1 ? `1px solid ${T.border2}` : 'none' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12 }}>
+                            <span style={{ fontWeight:700, color:t.from.color }}>{t.from.name}</span>
+                            <span style={{ color:T.muted, fontSize:10 }}>owes</span>
+                            <span style={{ fontWeight:700, color:t.to.color }}>{t.to.name}</span>
+                          </div>
+                          <span style={{ fontSize:14, fontWeight:800, color:T.text }}>${t.amount.toFixed(2)}</span>
+                        </div>
                       ))}
+                      {transactions.length > 0 && (() => {
+                        const credited = {};
+                        transactions.forEach(t => { credited[t.to.name] = (credited[t.to.name]||0) + t.amount; });
+                        return Object.entries(credited).map(([name, amt], idx) => {
+                          const mi = group.members.findIndex(m => m.name === name);
+                          const color = mi >= 0 ? T.COLORS[mi % T.COLORS.length] : T.accent;
+                          return (
+                            <div key={`cr-${idx}`} style={{ display:'flex', justifyContent:'space-between', padding:'4px 0', borderTop:`1px solid ${T.border}`, marginTop:4 }}>
+                              <div style={{ fontSize:11, color:T.muted }}><span style={{ fontWeight:700, color }}>{name}</span> gets back</div>
+                              <span style={{ fontSize:13, fontWeight:800, color:T.accent }}>${amt.toFixed(2)}</span>
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
-                  <div style={{ display:'flex', gap:6, alignItems:'center', marginLeft:12, flexShrink:0 }}>
-                    <button onClick={()=>loadGroup(group)}
-                      style={{ background:T.accent, color:T.accentText, border:'none', borderRadius:2, padding:'6px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, cursor:'pointer', letterSpacing:'0.06em' }}>
-                      Load
-                    </button>
-                    <button onClick={()=>deleteGroup(group.id)}
-                      style={{ background:'none', border:`1px solid ${T.removeBorder}`, color:T.removeText, borderRadius:2, padding:'6px 10px', fontFamily:'"Urbanist",sans-serif', fontSize:10, cursor:'pointer', opacity:0.7 }}>
-                      ×
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1106,22 +1517,46 @@ export default function App() {
           )}
         </div>
 
-        {/* Group quick-load chips */}
+        {/* Group quick-load dropdown */}
         {savedGroups.length > 0 && (
-          <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:10 }}>
-            {savedGroups.map(group => (
-              <button key={group.id} className="group-chip" onClick={()=>loadGroup(group)}
-                style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:100, border:`1px solid ${T.accent}44`, background:`${T.accent}11`, color:T.accent, fontSize:10, fontWeight:600, cursor:'pointer', fontFamily:'"Urbanist",sans-serif', transition:'all 0.15s' }}>
-                <i className="ti ti-users" style={{ fontSize:12 }} aria-hidden="true"/>
-                {group.name}
-              </button>
-            ))}
+          <div style={{ marginBottom:10 }}>
+            <select onChange={e => { const g = savedGroups.find(g=>g.id===parseInt(e.target.value)); if(g) loadGroup(g); e.target.value=''; }}
+              style={{ width:'100%', background:T.inputBg, border:`1px solid ${T.ghostBorder}`, color:T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:12, padding:'8px 10px', borderRadius:2, outline:'none', cursor:'pointer', colorScheme: dark ? 'dark' : 'light' }}>
+              <option value="">Load a group...</option>
+              {savedGroups.map(group => (
+                <option key={group.id} value={group.id}>{group.name} ({group.members.map(m=>m.name).join(', ')})</option>
+              ))}
+            </select>
           </div>
         )}
 
         <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-          <input style={{ ...solidInput({ width:140 }) }} placeholder="Add person..."
-            value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addPerson()} />
+          <div style={{ position:'relative' }}>
+            <input style={{ ...solidInput({ width:140 }) }} placeholder="Add person..."
+              value={newName}
+              onChange={e=>{ setNewName(e.target.value); setShowSuggestions(true); }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              onKeyDown={e=>{ if(e.key==='Enter'){ addPerson(); setShowSuggestions(false); } }} />
+            {showSuggestions && (() => {
+              const allMembers = [...new Set(savedGroups.flatMap(g => g.members.map(m => m.name)))];
+              const existing = new Set(people.map(p => p.name));
+              const filtered = allMembers.filter(m => !existing.has(m) && (newName === '' || m.toLowerCase().includes(newName.toLowerCase())));
+              if (!filtered.length) return null;
+              return (
+                <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:999, background:T.inputBg, border:`1px solid ${T.accent}`, borderRadius:2, minWidth:160, overflow:'hidden' }}>
+                  <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, padding:'6px 12px 4px' }}>From your groups</div>
+                  {filtered.map((name, i) => (
+                    <div key={i}
+                      onMouseDown={e => { e.preventDefault(); setPeople(p => [...p, { id:Date.now()+i, name, color:T.COLORS[p.length % T.COLORS.length] }]); setNewName(''); setShowSuggestions(false); }}
+                      style={{ padding:'8px 12px', fontSize:12, color:T.text, cursor:'pointer', background:'transparent', borderTop:`1px solid ${T.border2}` }}>
+                      {name}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
           <button onClick={addPerson}
             style={{ background:T.btnBg, color:T.btnText, border:'none', borderRadius:2, padding:'7px 14px', fontFamily:'"Urbanist",sans-serif', fontSize:13, fontWeight:700, cursor:'pointer', lineHeight:1 }}>
             +
@@ -1162,7 +1597,7 @@ export default function App() {
                 {scanning ? 'SCANNING...' : 'UPLOAD BILL / RECEIPT'}
               </div>
               <div style={{ fontSize:10, color:T.muted2 }}>
-                {scanning ? 'Extracting line items...' : 'Claude auto-detects items · or add manually below'}
+                {scanning ? 'Extracting line items...' : 'Auto-detects items · or add manually below'}
               </div>
             </div>
             {addingItem ? (
@@ -1175,7 +1610,7 @@ export default function App() {
                 <button onClick={()=>setAddingItem(false)} style={ghBtn()}>Cancel</button>
               </div>
             ) : (
-              <button onClick={()=>setAddingItem(true)} style={{ ...ghBtn(), marginBottom:16 }}>+ Add item manually</button>
+              <button onClick={()=>setAddingItem(true)} style={{ background:'none', border:`1px solid ${T.accent}`, borderRadius:2, padding:'9px 18px', color:T.accent, fontFamily:'"Urbanist",sans-serif', fontSize:12, fontWeight:600, cursor:'pointer', marginBottom:16, letterSpacing:'0.06em' }}>+ Add item manually</button>
             )}
           </>
         )}
@@ -1252,6 +1687,16 @@ export default function App() {
               </div>
             </div>
 
+            {/* Grand Total row */}
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 6px', borderBottom:`1px solid ${T.border}` }}>
+              <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.2em', textTransform:'uppercase', color:T.muted }}>Grand Total</div>
+              <div style={{ fontSize:22, fontWeight:800, color:T.text }}>${(() => {
+                const total = items.reduce((sum, item) => sum + parseFloat(item.price||0) * (parseInt(item.qty)||1), 0);
+                const disc = parseFloat(discount.amount) || 0;
+                return Math.max(0, total - disc).toFixed(2);
+              })()}</div>
+            </div>
+
             {/* Add / upload more */}
             <div style={{ display:'flex', gap:8, padding:'12px 0' }}>
               {addingItem ? (
@@ -1283,27 +1728,16 @@ export default function App() {
         {hasItems && hasPeople && (
           <div style={{ marginTop:8, paddingTop:20, borderTop:`1px solid ${T.border}` }}>
             <div>
-            {/* Split tabs */}
-            <div style={{ display:'flex', gap:0, marginBottom:16, border:`1px solid ${T.border}`, borderRadius:2, overflow:'hidden' }}>
-              {['breakdown','settle'].map(v => (
-                <button key={v} onClick={() => setSplitView(v)}
-                  style={{ flex:1, padding:'8px', background: splitView===v ? T.btnBg : 'none', color: splitView===v ? T.btnText : T.muted, border:'none', fontFamily:'"Urbanist",sans-serif', fontSize:10, fontWeight:700, letterSpacing:'0.12em', textTransform:'uppercase', cursor:'pointer', transition:'all 0.15s' }}>
-                  {v === 'breakdown' ? 'Breakdown' : 'Settle Up'}
-                </button>
-              ))}
-            </div>
 
-            {/* Who paid */}
+
+            {/* Paid by */}
             <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14, padding:'10px 14px', background:T.surface, border:`1px solid ${T.border}`, borderRadius:2 }}>
-              <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, flexShrink:0 }}>Who paid?</div>
-              <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-                {people.map(p => (
-                  <div key={p.id} onClick={() => setPaidBy(paidBy === p.id ? '' : p.id)}
-                    style={{ display:'flex', alignItems:'center', gap:5, padding:'4px 10px', borderRadius:100, border:`1px solid ${paidBy===p.id ? p.color : p.color+'33'}`, background:paidBy===p.id ? p.color+'1a' : 'transparent', color:p.color, fontSize:11, fontWeight:500, cursor:'pointer', userSelect:'none', transition:'all 0.15s' }}>
-                    {paidBy===p.id ? '–' : '+'} {p.name}
-                  </div>
-                ))}
-              </div>
+              <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:T.muted, flexShrink:0 }}>Paid by</div>
+              <select value={paidBy} onChange={e => setPaidBy(e.target.value)}
+                style={{ flex:1, background:T.inputBg, border:`1px solid ${paidBy ? people.find(p=>p.id===parseInt(paidBy)||p.id===paidBy)?.color || T.border : T.ghostBorder}`, color: paidBy ? people.find(p=>p.id===parseInt(paidBy)||p.id===paidBy)?.color || '#93c5fd' : T.muted, fontFamily:'"Urbanist",sans-serif', fontSize:12, padding:'7px 10px', borderRadius:6, outline:'none', cursor:'pointer', transition:'border-color 0.15s', colorScheme: dark ? 'dark' : 'light' }}>
+                <option value="">Select person...</option>
+                {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
             </div>
 
             {splitView === 'breakdown' && (
@@ -1380,7 +1814,7 @@ export default function App() {
               // Calculate net balances
               const balances = {};
               people.forEach(p => { balances[p.id] = -(finals[p.id] || 0); });
-              if (paidBy) { balances[paidBy] = (balances[paidBy] || 0) + grandTotal; }
+              if (paidBy) { const pid = typeof paidBy === 'string' ? parseInt(paidBy) || paidBy : paidBy; balances[pid] = (balances[pid] || 0) + grandTotal; }
 
               // Simplify debts
               const transactions = [];
@@ -1473,7 +1907,7 @@ export default function App() {
       <div style={{ position:'fixed', bottom:0, left:0, right:0, background:T.surface, borderTop:`1px solid ${T.border}`, display:'flex', zIndex:100 }}>
         {[
           { icon:'home', label:'Home', action:() => setPage('home') },
-          { icon:'plus', label:'New', action:() => { resetSplit(); } },
+          { icon:'plus', label:'New', action:() => { resetSplit(); setShowSaved(false); setShowGroups(false); setShowDashboard(false); } },
           { icon:'bookmark', label:`Saved${savedSplits.length>0?' ('+savedSplits.length+')':''}`, action:() => { setShowSaved(s=>!s); setShowGroups(false); setShowDashboard(false); }, active: showSaved },
           { icon:'users', label:`Groups${savedGroups.length>0?' ('+savedGroups.length+')':''}`, action:() => { setShowGroups(s=>!s); setShowSaved(false); setShowDashboard(false); }, active: showGroups },
         ].map((item, i) => (
